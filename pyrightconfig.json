@@ -1,0 +1,9 @@
+{
+  "venvPath": "/Users/vikrammac/Documents/TECHVISTA/backend",
+  "venv": "venv",
+  "extraPaths": [
+    "/Users/vikrammac/Documents/TECHVISTA/backend"
+  ],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "off"
+}

@@ -3,7 +3,7 @@ Authentication routes for Supabase Auth integration.
 Handles signup, login, and profile endpoints.
 """
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from db.supabase_client import get_supabase
 from typing import Optional
 
@@ -11,13 +11,13 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 class SignupRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     full_name: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 

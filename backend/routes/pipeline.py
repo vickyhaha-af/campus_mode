@@ -378,6 +378,31 @@ async def analyze_authenticity(request: AntiBSRequest):
         raise HTTPException(status_code=400, detail="resume_text is required")
 
     try:
+        prompt = f"""You are an expert technical recruiter and writing coach.
+
+Analyze the following resume text for linguistic authenticity. Your task:
+
+1. Extract ALL action verbs used in the resume.
+2. Separate them into two categories:
+   - "fluff_words": vague/passive (e.g., "helped", "involved in", "assisted", "participated", "worked on", "collaborated")
+   - "hard_outcomes": specific, quantified achievements (e.g., "scaled to 10k users", "reduced latency by 40%", "architected", "built", "launched", "shipped")
+3. Calculate a signal_to_noise_ratio: (count of hard_outcomes) / (total action verbs). Range: 0.0–1.0.
+4. Produce an authenticity_score 0–100 based on density of hard outcomes vs. vague language.
+5. Write a brief analysis_notes (2-3 sentences).
+
+Resume text:
+{request.resume_text[:5000]}
+
+Return ONLY a valid JSON object with this exact schema (no markdown, no extra text):
+{{
+  "action_verbs": ["verb1", "verb2"],
+  "fluff_words": ["helped", "assisted"],
+  "hard_outcomes": ["scaled to 10k users", "reduced latency by 40%"],
+  "signal_to_noise_ratio": 0.65,
+  "authenticity_score": 72,
+  "analysis_notes": "Brief explanation of the score."
+}}"""
+
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt,
@@ -445,6 +470,32 @@ async def match_team_topology(request: TopologyMatchRequest):
         raise HTTPException(status_code=400, detail="team_context is required")
 
     try:
+        prompt = f"""You are an expert engineering manager evaluating a candidate for their team-culture and skill-gap fit.
+
+CURRENT TEAM DYNAMICS / BLIND SPOTS:
+{request.team_context}
+
+JOB DESCRIPTION:
+{request.jd_text[:2000]}
+
+CANDIDATE RESUME:
+{request.resume_text[:3000]}
+
+Analyze:
+1. What specific gaps in the team does this candidate fill? (skills, mindsets, domain knowledge)
+2. Where does the candidate overlap with existing team capabilities? (risk of redundancy)
+3. What is the expected impact on team balance? (one sentence)
+4. Give an overall fit_score 0–100 and a final recommendation.
+
+Return ONLY a valid JSON object (no markdown, no extra text):
+{{
+  "fit_score": 78,
+  "fills_gaps": ["DevOps expertise", "Cloud architecture", "CI/CD experience"],
+  "overlaps": ["Python backend", "REST API design"],
+  "team_balance_impact": "Adds much-needed infrastructure depth while providing overlap in backend APIs.",
+  "recommendation": "Strong team fit. The DevOps gap is critical — this hire directly addresses it."
+}}"""
+
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt,

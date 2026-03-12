@@ -154,6 +154,16 @@ async def compare_candidates(request: CompareRequest):
 
     # Generate Narrative
     try:
+        prompt = f"""You are an HR analytics engine. Write a single paragraph (max 60 words) explaining why Candidate A scored differently than Candidate B.
+Candidate A composite: {candA.composite_score:.1f}%
+Candidate B composite: {candB.composite_score:.1f}%
+Total Gap: {total_delta:.1f}pp
+Skills Contribution: {delta_skills_cont:.1f}pp ({s_share:.1f}% share of gap).
+Experience Contribution: {delta_exp_cont:.1f}pp ({e_share:.1f}% share of gap).
+Education Contribution: {delta_edu_cont:.1f}pp ({ed_share:.1f}% share of gap).
+
+The primary driver is {primary_driver}. Make it sound like a professional analytics insight. Do not use generic filler. Do not use bullet points. If Candidate A won, say "Candidate A possesses an advantage driven by..."
+"""
         response = client.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt,

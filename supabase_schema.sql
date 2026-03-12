@@ -1,6 +1,9 @@
 -- Tech Vista Supabase Database Schema
 -- Run this in Supabase SQL Editor to set up tables
 
+-- Enable pgvector extension for embeddings (must be first!)
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- ============================================
 -- SESSIONS TABLE (replaces /tmp file storage)
 -- ============================================

@@ -82,23 +82,40 @@ Before multi-tenant launch (🔴 code needed):
 
 ## 5. Deployment
 
-### Backend (Railway)
+### Backend (Render — free tier, no CC)
 
-Already configured in `railway.toml`:
-```toml
-[build]
-builder = "nixpacks"
+Config in `render.yaml` at repo root. Python pinned to 3.11.10 via `.python-version` + `runtime.txt` (scipy==1.13.1 needs Py 3.11 wheels).
 
-[deploy]
-startCommand = "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
-healthcheckPath = "/api/health"
+**One-time setup:**
+1. Log in at [render.com](https://render.com) (GitHub OAuth, no CC).
+2. **New + → Web Service → Connect GitHub → pick `campus_mode` repo**.
+3. Render reads `render.yaml` automatically. Confirm defaults.
+4. Under *Environment*, add these **secrets** (the 6 `sync: false` ones):
+   - `GEMINI_API_KEY_1`
+   - `GEMINI_API_KEY_2`
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
+   - `SUPABASE_JWT_SECRET`
+   - `ALLOWED_ORIGINS` — must include your Vercel URL, e.g. `https://campus-mode.vercel.app,http://localhost:5180`
+5. Click **Deploy**. First build takes ~3-5 min (pip install of scipy is slow).
+6. When live, your backend URL is `https://campus-backend.onrender.com` (or whatever suffix Render assigns).
+
+**Free tier gotchas:**
+- Spins down after 15 min of no traffic. First request after sleep wakes it up (~30-50s cold start).
+- 512MB RAM limit. Bulk ingest of 100+ resumes may be tight; consider splitting into smaller batches.
+- Auto-deploys on push to `main` (autoDeploy: true in config).
+
+**Alt free options if Render sleep is a problem:**
+- **Koyeb** (koyeb.com): 1 always-on free service, 512MB RAM. Same config shape works.
+- **Hugging Face Spaces**: 16GB free RAM, no sleep. Push your `backend/` as a Docker space.
+
+### Frontend (Vercel)
+
+Already configured in `vercel.json`. After backend is deployed, set ONE env var in Vercel dashboard:
 ```
-
-Required env vars in Railway dashboard:
-- `GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`
-- `ALLOWED_ORIGINS` (must include your Vercel frontend URL)
-- Python 3.11 (via `.python-version` file — already pinned to 3.11 for scipy wheels)
+VITE_API_URL = https://<your-render-subdomain>.onrender.com/api
+```
+Trigger a redeploy (just push anything, or click "Redeploy" in Vercel).
 
 ### Frontend (Vercel)
 

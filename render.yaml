@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: campus-backend
+    runtime: python
+    plan: free
+    region: singapore          # closer to India than oregon/frankfurt
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true           # redeploy on every push to main
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.10"       # matches the scipy==1.13.1 wheel pin in requirements.txt
+      # Secrets below are set manually in the Render dashboard (sync: false stops them
+      # from being leaked into the public render.yaml).
+      - key: GEMINI_API_KEY_1
+        sync: false
+      - key: GEMINI_API_KEY_2
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: AUDIT_LOG_PATH
+        value: /tmp/techvista_audit.json
+      - key: EMAIL_PROVIDER
+        value: mock
+      - key: FROM_EMAIL
+        value: hiring@techvista.demo
+      - key: FROM_NAME
+        value: Tech Vista Hiring Team

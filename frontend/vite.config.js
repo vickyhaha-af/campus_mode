@@ -12,10 +12,6 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       }
-    },
-    fs: {
-      // Allow importing from ../campus/frontend (campus vertical lives at repo root)
-      allow: ['..', '.']
     }
   }
 })

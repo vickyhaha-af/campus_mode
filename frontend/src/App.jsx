@@ -12,17 +12,17 @@ import { ToastProvider } from './components/Toast'
 import { ModalProvider, SpatialContent } from './components/ModalContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 
-// ---- Campus vertical (lives in ../../campus/frontend) ----
-import CampusLanding from '../../campus/frontend/pages/CampusLanding'
-import CollegeSetupPage from '../../campus/frontend/pages/CollegeSetupPage'
-import PCDashboard from '../../campus/frontend/pages/PCDashboard'
-import BulkIngestPage from '../../campus/frontend/pages/BulkIngestPage'
-import StudentsListPage from '../../campus/frontend/pages/StudentsListPage'
-import DrivesListPage from '../../campus/frontend/pages/DrivesListPage'
-import DriveDetailPage from '../../campus/frontend/pages/DriveDetailPage'
-import CampusChatPage from '../../campus/frontend/pages/ChatPage'
-import StudentDashboard from '../../campus/frontend/pages/StudentDashboard'
-import RecruiterView from '../../campus/frontend/pages/RecruiterView'
+// ---- Campus vertical (./campus) ----
+import CampusLanding from './campus/pages/CampusLanding'
+import CollegeSetupPage from './campus/pages/CollegeSetupPage'
+import PCDashboard from './campus/pages/PCDashboard'
+import BulkIngestPage from './campus/pages/BulkIngestPage'
+import StudentsListPage from './campus/pages/StudentsListPage'
+import DrivesListPage from './campus/pages/DrivesListPage'
+import DriveDetailPage from './campus/pages/DriveDetailPage'
+import CampusChatPage from './campus/pages/ChatPage'
+import StudentDashboard from './campus/pages/StudentDashboard'
+import RecruiterView from './campus/pages/RecruiterView'
 
 // Global session context
 const SessionContext = createContext(null)

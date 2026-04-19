@@ -12,6 +12,18 @@ import { ToastProvider } from './components/Toast'
 import { ModalProvider, SpatialContent } from './components/ModalContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 
+// ---- Campus vertical (lives in ../../campus/frontend) ----
+import CampusLanding from '../../campus/frontend/pages/CampusLanding'
+import CollegeSetupPage from '../../campus/frontend/pages/CollegeSetupPage'
+import PCDashboard from '../../campus/frontend/pages/PCDashboard'
+import BulkIngestPage from '../../campus/frontend/pages/BulkIngestPage'
+import StudentsListPage from '../../campus/frontend/pages/StudentsListPage'
+import DrivesListPage from '../../campus/frontend/pages/DrivesListPage'
+import DriveDetailPage from '../../campus/frontend/pages/DriveDetailPage'
+import CampusChatPage from '../../campus/frontend/pages/ChatPage'
+import StudentDashboard from '../../campus/frontend/pages/StudentDashboard'
+import RecruiterView from '../../campus/frontend/pages/RecruiterView'
+
 // Global session context
 const SessionContext = createContext(null)
 
@@ -81,6 +93,18 @@ function AppContent() {
             sessionData ? <DashboardPage sessionData={sessionData} setSessionData={setSessionData} /> : <Navigate to="/" />
           } />
           <Route path="/export" element={<ExportPage />} />
+
+          {/* ---- Campus vertical ---- */}
+          <Route path="/campus" element={<CampusLanding />} />
+          <Route path="/campus/setup" element={<CollegeSetupPage />} />
+          <Route path="/campus/pc" element={<PCDashboard />} />
+          <Route path="/campus/ingest" element={<BulkIngestPage />} />
+          <Route path="/campus/students" element={<StudentsListPage />} />
+          <Route path="/campus/drives" element={<DrivesListPage />} />
+          <Route path="/campus/drives/:driveId" element={<DriveDetailPage />} />
+          <Route path="/campus/chat" element={<CampusChatPage />} />
+          <Route path="/campus/student" element={<StudentDashboard />} />
+          <Route path="/campus/recruiter" element={<RecruiterView />} />
         </Routes>
       </SpatialContent>
     </SessionContext.Provider>

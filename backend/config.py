@@ -66,7 +66,7 @@ MAX_RETRIES = 3
 # Default allows local dev; override with env var for production
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:5174,http://localhost:3000,http://127.0.0.1:5173"
+    "http://localhost:5173,http://localhost:5174,http://localhost:5180,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:5180"
 ).split(",")
 
 # Feature 2 & 3: Advanced Hiring OS Parameters

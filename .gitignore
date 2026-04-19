@@ -17,3 +17,17 @@ frontend prototype/
 vercel /
 *.pyc
 __pycache__/
+
+# Claude Code local state
+.claude/
+
+# Test artifacts
+test.pdf
+backend/test.pdf
+*.test.pdf
+
+# OS junk
+**/.DS_Store
+
+# Stray empty file
+=

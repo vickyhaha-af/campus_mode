@@ -3,6 +3,7 @@ Tech Vista — Bias-Aware AI Resume Screening for Indian Startups
 FastAPI Application Entry Point
 """
 import os
+import sys
 import json
 import uuid
 import time
@@ -12,6 +13,12 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 from typing import Optional
+
+# Make the TECHVISTA repo root importable so `campus.*` resolves
+# even though uvicorn starts from inside `backend/`.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from config import DEFAULT_WEIGHTS, ALLOWED_ORIGINS
 from models.schemas import SessionData, WeightsUpdate, ParsedJD
@@ -71,6 +78,32 @@ app.include_router(upload_router)
 app.include_router(pipeline_router)
 app.include_router(explain_router)
 app.include_router(talent_pool_router)
+
+# ---- TechVista Campus (placement-cell vertical) ----
+# Best-effort: if campus can't import (e.g. supabase-py version skew in a
+# partial environment), the parent Tech Vista app still boots.
+try:
+    from campus.backend.routes.colleges import router as campus_colleges_router
+    from campus.backend.routes.students import router as campus_students_router
+    from campus.backend.routes.companies import router as campus_companies_router
+    from campus.backend.routes.drives import router as campus_drives_router
+    from campus.backend.routes.ingest import router as campus_ingest_router
+    from campus.backend.routes.chat import router as campus_chat_router
+    from campus.backend.routes.demo import router as campus_demo_router
+    from campus.backend.routes.shortlists import router as campus_shortlists_router
+
+    app.include_router(campus_colleges_router)
+    app.include_router(campus_students_router)
+    app.include_router(campus_companies_router)
+    app.include_router(campus_drives_router)
+    app.include_router(campus_ingest_router)
+    app.include_router(campus_chat_router)
+    app.include_router(campus_demo_router)
+    app.include_router(campus_shortlists_router)
+
+    print("✓ Campus vertical routes registered under /api/campus/* (incl. chat + demo)")
+except Exception as _campus_err:  # pragma: no cover
+    print(f"⚠ Campus routes not loaded: {_campus_err}")
 
 
 # ==================== HEALTH ====================

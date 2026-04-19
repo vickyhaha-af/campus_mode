@@ -4,11 +4,12 @@ Separate embeddings per resume section (skills, experience, education).
 """
 import time
 from google import genai
+from services.gemini_client import make_client
 from config import GEMINI_API_KEY_2, GEMINI_EMBEDDING_MODEL, API_CALL_DELAY_SECONDS, MAX_RETRIES
 
 
 def _get_client():
-    return genai.Client(api_key=GEMINI_API_KEY_2)
+    return make_client(GEMINI_API_KEY_2)
 
 
 def _embed_with_retry(text: str, task_type: str = "SEMANTIC_SIMILARITY") -> list[float]:

@@ -67,7 +67,7 @@ export default function LandingPage({ onStart }) {
           }}>by M S Vikram</span>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <a href="http://localhost:8000/docs" target="_blank" rel="noopener noreferrer" style={{
+          <a href={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/docs`} target="_blank" rel="noopener noreferrer" style={{
             fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--slate-mid)',
             textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4,
             padding: '6px 12px', borderRadius: 8, transition: 'color 150ms'

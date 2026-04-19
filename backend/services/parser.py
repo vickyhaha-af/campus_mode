@@ -6,6 +6,7 @@ import json
 import time
 from google import genai
 from google.genai import types
+from services.gemini_client import make_client
 from config import (
     GEMINI_API_KEY_1, GEMINI_FLASH_MODEL,
     API_CALL_DELAY_SECONDS, MAX_RETRIES,
@@ -79,7 +80,7 @@ Rules:
 
 
 def _get_client():
-    return genai.Client(api_key=GEMINI_API_KEY_1)
+    return make_client(GEMINI_API_KEY_1)
 
 
 def _call_gemini_with_retry(prompt: str) -> str:

@@ -6,17 +6,23 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$PROJECT_DIR/backend"
 FRONTEND_DIR="$PROJECT_DIR/frontend"
 
-echo "🧹 Clearing stale processes..."
-for port in 8000 5173; do
+echo "🧹 Clearing stale Tech Vista processes only..."
+# Kill only OUR previously started processes on 8000 / 5180 — leaves other
+# local projects (e.g. the thing on :5173) untouched.
+for port in 8000 5180; do
   pid=$(lsof -ti :$port 2>/dev/null)
   [ -n "$pid" ] && kill -9 $pid 2>/dev/null && echo "  Killed process on :$port"
 done
 sleep 1
 
+# Prefer new venv at repo root; fall back to legacy backend/venv.
+VENV_PY="$PROJECT_DIR/.venv/bin/uvicorn"
+[ -x "$VENV_PY" ] || VENV_PY="$BACKEND_DIR/venv/bin/uvicorn"
+
 echo ""
 echo "🚀 Starting backend (FastAPI + Uvicorn on :8000)..."
 cd "$BACKEND_DIR"
-(./venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/techvista_backend.log 2>&1 &)
+("$VENV_PY" main:app --host 0.0.0.0 --port 8000 > /tmp/techvista_backend.log 2>&1 &)
 sleep 3
 
 if curl -s --max-time 3 http://localhost:8000/api/health > /dev/null 2>&1; then
@@ -28,13 +34,13 @@ else
 fi
 
 echo ""
-echo "⚡ Starting frontend (Vite on :5173)..."
+echo "⚡ Starting frontend (Vite on :5180)..."
 cd "$FRONTEND_DIR"
 (npm run dev -- --host > /tmp/techvista_frontend.log 2>&1 &)
 sleep 4
 
-if curl -s --max-time 3 http://localhost:5173 > /dev/null 2>&1; then
-  echo "  ✅ Frontend live at http://localhost:5173"
+if curl -s --max-time 3 http://localhost:5180 > /dev/null 2>&1; then
+  echo "  ✅ Frontend live at http://localhost:5180"
 else
   echo "  ❌ Frontend failed — check /tmp/techvista_frontend.log"
   cat /tmp/techvista_frontend.log | tail -20
@@ -42,10 +48,11 @@ else
 fi
 
 echo ""
-echo "✅ Tech Vista is running!"
-echo "   Frontend: http://localhost:5173"
-echo "   Backend:  http://localhost:8000"
-echo "   API Docs: http://localhost:8000/docs"
+echo "✅ Tech Vista + Campus is running!"
+echo "   Frontend:       http://localhost:5180"
+echo "   Campus portal:  http://localhost:5180/campus"
+echo "   Backend:        http://localhost:8000"
+echo "   API Docs:       http://localhost:8000/docs"
 echo ""
 echo "Press Ctrl+C to stop both servers."
 

@@ -6,7 +6,9 @@ services:
     region: singapore          # closer to India than oregon/frankfurt
     rootDir: .
     buildCommand: pip install -r requirements.txt
-    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    # --app-dir puts backend/ on sys.path; unambiguous vs 'cd backend && ...'
+    # which Render's startCommand parser strips the prefix off.
+    startCommand: uvicorn --app-dir backend main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     autoDeploy: true           # redeploy on every push to main
     envVars:

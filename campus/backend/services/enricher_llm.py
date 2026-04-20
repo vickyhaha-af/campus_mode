@@ -271,17 +271,36 @@ def extract_rich_profile(resume_text: str) -> Dict[str, Any]:
     """
     Extract the full rich profile from raw resume text.
 
-    Returns a dict matching the prompt's JSON schema. On any Gemini failure
-    (quota, timeout, circuit-breaker-open, parse error) we return a rich
-    regex-based fallback so the ingest pipeline always produces a usable
-    profile.
+    Tries providers in order: Groq (primary) → Gemini (secondary) → regex
+    fallback (never-hangs). The unified `llm_client.generate_json` handles
+    the Groq/Gemini split; if both fail we log the reason and use regex.
     """
+    from services.llm_client import (  # type: ignore
+        generate_json, primary_backend, groq_available,
+    )
+
     snippet = resume_text[:12000]
+    prompt = RICH_EXTRACT_PROMPT.format(text=snippet)
+
     try:
-        raw = _call_with_retry(RICH_EXTRACT_PROMPT.format(text=snippet))
-        data = _parse_json(raw)
+        # Prefer the unified client if ANY real LLM backend is configured.
+        backend = primary_backend()
+        if backend == "none":
+            raise RuntimeError("no_llm_backend")
+
+        if backend == "groq":
+            # Groq supports response_format={"type": "json_object"} — use it.
+            data = generate_json(
+                prompt,
+                system="You are a resume parser. Reply with a single JSON object that matches the schema in the user prompt exactly. No prose outside the JSON.",
+                max_tokens=4096,
+            )
+        else:
+            # Gemini path — our existing circuit-breaker-guarded helper.
+            raw = _call_with_retry(prompt)
+            data = _parse_json(raw)
     except Exception as e:  # noqa: BLE001
-        reason = _circuit_reason() if _circuit_open() else str(e)[:120]
+        reason = _circuit_reason() if _circuit_open() else str(e)[:160]
         print(f"[enricher_llm] fallback → regex (reason: {reason})")
         fb = _fallback_with_text(resume_text)
         fb["_fallback_reason"] = reason

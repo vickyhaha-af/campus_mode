@@ -23,6 +23,9 @@ from google import genai  # type: ignore
 from google.genai import types  # type: ignore
 
 from services.gemini_client import make_client  # type: ignore
+from services.llm_client import (  # type: ignore
+    groq_available, chat_with_tools as groq_chat_with_tools, GROQ_MODEL,
+)
 from config import GEMINI_API_KEY_1, GEMINI_FLASH_MODEL  # type: ignore
 
 from ..db import T_CHAT, select_one, insert, update
@@ -255,6 +258,156 @@ def _messages_to_contents(messages: List[Dict[str, Any]]) -> List[types.Content]
 
 
 # ---------------------------------------------------------------------------
+# OpenAI-format tool schema (used by Groq via llm_client.chat_with_tools)
+# ---------------------------------------------------------------------------
+
+def _openai_tools() -> List[Dict[str, Any]]:
+    """Same tools as _tool_declarations(), in OpenAI-compatible JSON Schema format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_students",
+                "description": (
+                    "Filter the student pool by structured attributes (branch, year, cgpa, "
+                    "backlogs, gender, current_city, placement status). Returns compact "
+                    "student summaries. Use this FIRST for any filtered query."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "branch": {"type": "string", "description": "Branch abbreviation e.g. CSE, ECE, IPM, MBA"},
+                        "year": {"type": "integer", "description": "Graduation year"},
+                        "placed_status": {"type": "string", "enum": ["unplaced", "in_process", "placed"]},
+                        "min_cgpa": {"type": "number"},
+                        "max_active_backlogs": {"type": "integer"},
+                        "gender": {"type": "string", "description": "Use only if drive eligibility requires it; triggers compliance warning otherwise"},
+                        "current_city": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "semantic_rank",
+                "description": (
+                    "Rank students by semantic fit against a free-text query or JD. "
+                    "Optionally scope to a subset of student_ids. Returns ranked list with fit_score (0-100)."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query_text": {"type": "string", "description": "JD text or description to match against"},
+                        "student_ids": {"type": "array", "items": {"type": "string"}},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["query_text"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fetch_drive",
+                "description": "Load a drive's JD, location, eligibility rules, and metadata.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"drive_id": {"type": "string"}},
+                    "required": ["drive_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "check_eligibility",
+                "description": "Check if a student meets a drive's eligibility rules. Returns violations if any.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "student_id": {"type": "string"},
+                        "drive_id": {"type": "string"},
+                    },
+                    "required": ["student_id", "drive_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_student_profile",
+                "description": "Fetch a student's full profile including rich enrichment (passions, personality, role_fit).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"student_id": {"type": "string"}},
+                    "required": ["student_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "explain_fit",
+                "description": (
+                    "Get factual signals (skill overlap, top role fits, passion alignment, personality) "
+                    "for a student-drive pair. Use as source material to write a human-readable rationale."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "student_id": {"type": "string"},
+                        "drive_id": {"type": "string"},
+                    },
+                    "required": ["student_id", "drive_id"],
+                },
+            },
+        },
+    ]
+
+
+def _messages_to_openai(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert our stored message history to OpenAI chat format."""
+    out: List[Dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "user":
+            out.append({"role": "user", "content": m.get("content") or ""})
+        elif role == "model":
+            # OpenAI uses "assistant" for model turns
+            msg: Dict[str, Any] = {"role": "assistant"}
+            if m.get("content"):
+                msg["content"] = m["content"]
+            # If this turn had tool calls, emit them in OpenAI format
+            tool_calls = m.get("tool_calls") or []
+            if tool_calls:
+                msg["tool_calls"] = [
+                    {
+                        "id": tc.get("id") or f"call_{i}",
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc.get("args") or {}),
+                        },
+                    }
+                    for i, tc in enumerate(tool_calls)
+                ]
+                if "content" not in msg:
+                    msg["content"] = None
+            if "content" not in msg:
+                msg["content"] = ""
+            out.append(msg)
+        elif role == "tool":
+            out.append({
+                "role": "tool",
+                "tool_call_id": m.get("tool_call_id") or f"call_{len(out)}",
+                "content": json.dumps(m.get("response") or {})[:4000],
+            })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # The agent loop
 # ---------------------------------------------------------------------------
 
@@ -290,7 +443,94 @@ async def run_agent_stream(
     messages.append({"role": "user", "content": user_message})
     yield _event("user_message", content=user_message)
 
-    # If Gemini isn't configured, run the deterministic fallback plan.
+    # --- Groq path (primary LLM when GROQ_API_KEY is configured) ---------
+    if groq_available():
+        try:
+            tools = _openai_tools()
+            iteration = 0
+            while iteration < MAX_TOOL_ITERATIONS:
+                iteration += 1
+                yield _event("thinking", iteration=iteration)
+
+                try:
+                    result = await asyncio.to_thread(
+                        groq_chat_with_tools,
+                        _messages_to_openai(messages),
+                        tools,
+                        SYSTEM_PROMPT,
+                        GROQ_MODEL,
+                        2048,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    # Groq hiccup — fall back to the deterministic plan instead
+                    # of just erroring out so the user always gets something.
+                    yield _event("fallback_triggered", reason=f"groq: {str(e)[:180]}")
+                    async for ev in run_fallback_stream(college_id, user_message, drive_context_id):
+                        if ev["type"] == "assistant_message":
+                            messages.append({"role": "model", "content": ev["content"], "fallback": True})
+                        if ev["type"] == "done":
+                            break
+                        yield ev
+                    break
+
+                text = result.get("text")
+                tool_calls = result.get("tool_calls") or []
+
+                if tool_calls:
+                    # Record the assistant turn with its tool calls.
+                    stored_calls = [
+                        {"id": tc["id"], "name": tc["name"], "args": tc.get("args") or {}}
+                        for tc in tool_calls
+                    ]
+                    messages.append({
+                        "role": "model",
+                        "content": text or None,
+                        "tool_calls": stored_calls,
+                    })
+
+                    # Execute tools.
+                    for tc in tool_calls:
+                        yield _event("tool_call", name=tc["name"], args=tc.get("args") or {})
+                        fn = TOOL_REGISTRY.get(tc["name"])
+                        if fn is None:
+                            tool_result = {"error": f"unknown tool: {tc['name']}"}
+                        else:
+                            try:
+                                call_args = dict(tc.get("args") or {})
+                                if tc["name"] in ("search_students", "semantic_rank") and "college_id" not in call_args:
+                                    call_args["college_id"] = college_id
+                                tool_result = await asyncio.to_thread(fn, **call_args)
+                            except TypeError as te:
+                                tool_result = {"error": f"tool invocation failed: {te}"}
+                            except Exception as e:  # noqa: BLE001
+                                tool_result = {"error": f"tool raised: {e}"}
+
+                        yield _event("tool_result", name=tc["name"], result=tool_result)
+                        messages.append({
+                            "role": "tool",
+                            "name": tc["name"],
+                            "tool_call_id": tc["id"],
+                            "response": tool_result,
+                        })
+                    continue  # let the LLM synthesise
+
+                # No tool calls → final answer
+                final = (text or "").strip() or "(no response)"
+                messages.append({"role": "model", "content": final})
+                yield _event("assistant_message", content=final)
+                break
+            else:
+                yield _event("error", message=f"Max {MAX_TOOL_ITERATIONS} tool iterations reached")
+                messages.append({"role": "model", "content": "(agent exceeded max tool iterations)"})
+
+        except Exception as e:  # noqa: BLE001
+            yield _event("error", message=f"groq agent failure: {e}")
+
+        _save_messages(session_id, messages, drive_context_id)
+        yield _event("done")
+        return
+
+    # --- Neither Groq nor Gemini available → deterministic fallback ------
     if not GEMINI_API_KEY_1:
         async for ev in run_fallback_stream(college_id, user_message, drive_context_id):
             if ev["type"] == "assistant_message":

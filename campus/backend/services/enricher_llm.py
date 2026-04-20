@@ -363,23 +363,35 @@ _STOP_WORDS = {
     "how", "why", "but", "not", "you", "your", "yours",
 }
 
+# Branch detection — ONLY match when in clear academic context. We search a
+# reduced window around degree / academic markers, not the whole document,
+# so stray mentions in projects ("ML project", "AI course") don't pollute.
 _BRANCH_MAP: List[Tuple[str, str]] = [
-    (r"\b(?:cse|computer\s*science(?:\s*(?:and|&)?\s*engineering)?)\b", "CSE"),
-    (r"\b(?:it|information\s*technology)\b", "IT"),
-    (r"\b(?:ece|electronics(?:\s*(?:and|&)?\s*communication)?)\b", "ECE"),
-    (r"\b(?:eee|electrical(?:\s*(?:and|&)?\s*electronics)?)\b", "EEE"),
-    (r"\b(?:ee|electrical\s*engineering)\b", "EE"),
-    (r"\bme\b|\bmechanical\s*engineering\b|\bmechanical\b", "ME"),
-    (r"\bce\b|\bcivil\s*engineering\b|\bcivil\b", "Civil"),
-    (r"\b(?:chem|chemical\s*engineering)\b", "Chem"),
-    (r"\b(?:aero|aerospace|aeronautical)\b", "Aero"),
-    (r"\bbio(?:tech|medical)?\b", "Bio"),
-    (r"\b(?:mba|master\s*of\s*business)\b", "MBA"),
+    # Management programs (IPM = Integrated Program in Management — IIM Indore/Rohtak/Ranchi)
+    (r"\b(?:ipm|integrated\s*program(?:me)?\s*in\s*management)\b", "IPM"),
+    (r"\b(?:bba|bachelor\s*of\s*business\s*administration)\b", "BBA"),
+    (r"\b(?:bbm|bachelor\s*of\s*business\s*management)\b", "BBM"),
+    (r"\b(?:bms|bachelor\s*of\s*management\s*studies)\b", "BMS"),
+    (r"\b(?:pgdm|post\s*graduate\s*diploma\s*in\s*management)\b", "PGDM"),
+    (r"\b(?:mba|master\s*of\s*business\s*administration)\b", "MBA"),
+    # Engineering branches (require word boundaries, and require context prefix for loose abbrevs)
+    (r"\bcomputer\s*science(?:\s*(?:and|&)?\s*engineering)?\b|(?:branch|major|specialisation|specialization|stream)\s*[:\-]?\s*cse\b", "CSE"),
+    (r"\binformation\s*technology\b|(?:branch|major|specialisation|specialization|stream)\s*[:\-]?\s*it\b", "IT"),
+    (r"\belectronics(?:\s*(?:and|&)?\s*communication)?\b|(?:branch|major|specialisation|specialization|stream)\s*[:\-]?\s*ece\b", "ECE"),
+    (r"\belectrical(?:\s*(?:and|&)?\s*electronics)?\s*engineering\b|(?:branch|major|specialisation|specialization|stream)\s*[:\-]?\s*eee\b", "EEE"),
+    (r"\belectrical\s*engineering\b|(?:branch|major|specialisation|specialization|stream)\s*[:\-]?\s*ee\b", "EE"),
+    (r"\bmechanical\s*engineering\b|(?:branch|major|specialisation|specialization|stream)\s*[:\-]?\s*me\b", "ME"),
+    (r"\bcivil\s*engineering\b|(?:branch|major|specialisation|specialization|stream)\s*[:\-]?\s*ce\b", "Civil"),
+    (r"\bchemical\s*engineering\b|(?:branch|major|specialisation|specialization|stream)\s*[:\-]?\s*chem\b", "Chem"),
+    (r"\baerospace\s*engineering\b|\baeronautical\s*engineering\b", "Aero"),
+    (r"\bbiotechnology\b|\bbiomedical\s*engineering\b", "Bio"),
     (r"\b(?:m\.?sc|master\s*of\s*science)\b", "MSc"),
     (r"\b(?:m\.?tech|master\s*of\s*technology)\b", "MTech"),
     (r"\b(?:b\.?sc|bachelor\s*of\s*science)\b", "BSc"),
-    (r"\b(?:ai(?:\s*(?:and|&)?\s*ml)?|artificial\s*intelligence)\b", "AI/ML"),
-    (r"\b(?:ds|data\s*science)\b", "DS"),
+    # AI/ML and DS — require an explicit academic-program context word to avoid
+    # false positives on ML mentions in projects/skills.
+    (r"(?:b\.?tech|btech|m\.?tech|mtech|bsc|msc|degree|major|specialisation|specialization|stream|program(?:me)?)\s*(?:in\s+)?(?:ai(?:\s*(?:&|and)?\s*ml)?|artificial\s*intelligence(?:\s*(?:&|and)?\s*machine\s*learning)?)\b", "AI/ML"),
+    (r"(?:b\.?tech|btech|m\.?tech|mtech|bsc|msc|degree|major|specialisation|specialization|stream|program(?:me)?)\s*(?:in\s+)?(?:data\s*science|ds)\b", "DS"),
 ]
 
 _DEGREE_PATTERNS: List[Tuple[str, str]] = [
@@ -388,10 +400,18 @@ _DEGREE_PATTERNS: List[Tuple[str, str]] = [
     (r"\bm\.?\s*sc\b|\bmaster\s*of\s*science\b", "M.Sc"),
     (r"\bm\.?\s*e\b|\bmaster\s*of\s*engineering\b", "M.E"),
     (r"\bmba\b|\bmaster\s*of\s*business\b", "MBA"),
+    (r"\bpgdm\b|\bpost\s*graduate\s*diploma\s*in\s*management\b", "PGDM"),
+    # Management bachelors — put BEFORE the engineering B.Tech so IPM students
+    # aren't mis-tagged as B.Tech from some stray "tech" mention.
+    (r"\bipm\b|\bintegrated\s*program(?:me)?\s*in\s*management\b", "IPM"),
+    (r"\bbba\b|\bbachelor\s*of\s*business\s*administration\b", "BBA"),
+    (r"\bbbm\b|\bbachelor\s*of\s*business\s*management\b", "BBM"),
+    (r"\bbms\b|\bbachelor\s*of\s*management\s*studies\b", "BMS"),
     (r"\bb\.?\s*tech\b|\bbachelor\s*of\s*technology\b", "B.Tech"),
     (r"\bb\.?\s*e\b|\bbachelor\s*of\s*engineering\b", "B.E"),
     (r"\bb\.?\s*sc\b|\bbachelor\s*of\s*science\b", "B.Sc"),
     (r"\bb\.?\s*a\b|\bbachelor\s*of\s*arts\b", "B.A"),
+    (r"\bb\.?\s*com\b|\bbachelor\s*of\s*commerce\b", "B.Com"),
 ]
 
 _SECTION_ALIASES: Dict[str, List[str]] = {
@@ -506,13 +526,15 @@ def _fallback_with_text(resume_text: str) -> Dict[str, Any]:
     skeleton["passions"] = passions
 
     # --- Summary --------------------------------------------------------
+    # Only use an explicit "Summary" / "Objective" / "About" section. If the
+    # resume has none, leave `summary` empty — the UI shows "No summary
+    # provided" which is truthful, rather than fabricating one from defaults.
     summ = (sections.get("summary", "") or "").strip()
     if summ:
-        # Remove the header line if present.
         summ_lines = [l for l in summ.splitlines() if l.strip()]
         skeleton["summary"] = " ".join(summ_lines)[:500]
     else:
-        skeleton["summary"] = _synth_summary(skeleton, degree)
+        skeleton["summary"] = ""
 
     # --- Embedding-ready text blobs -------------------------------------
     skeleton["skills_text"] = _join_skills_text(skeleton["skills"])
@@ -618,26 +640,26 @@ def _detect_degree(text: str) -> str:
 
 
 def _detect_grad_year(text: str) -> Optional[int]:
-    # "Class of 2026", "Expected 2026", "Graduating 2026", "Batch 2026", "— 2026"
+    """Graduation year — ONLY from explicit academic context.
+
+    Previously we fell back to 'the latest 20XX in the document', which picked
+    up internship end-dates / project years / award years and produced wildly
+    wrong graduation years (e.g. a 1st-year IPM student tagged as class of 2023).
+    Better to return None and let the UI show 'Year: —' than to invent.
+    """
     patterns = [
         r"(?:class\s+of|expected(?:\s+graduation)?|graduating|graduation|batch(?:\s+of)?)\s*[:\-–—]?\s*(20\d{2})",
-        r"(?:present|current|expected)\s*[–—\-]\s*(20\d{2})",
-        r"(?:[–—\-])\s*(20\d{2})\s*(?:present|current|expected)?",
+        r"(?:expected|anticipated)\s*[–—\-:]\s*(20\d{2})",
     ]
     for p in patterns:
         m = re.search(p, text, re.I)
         if m:
             try:
                 y = int(m.group(1))
-                if 2015 <= y <= 2035:
+                if 2020 <= y <= 2035:
                     return y
             except ValueError:
                 pass
-    # Fallback: the *latest* 20XX in the text is often graduation.
-    years = [int(y) for y in re.findall(r"\b(20\d{2})\b", text)]
-    future = [y for y in years if 2024 <= y <= 2032]
-    if future:
-        return max(future)
     return None
 
 
@@ -945,11 +967,27 @@ def _infer_domains(skills: List[str], projects: List[Dict[str, Any]]) -> List[st
 
 
 def _synth_summary(rec: Dict[str, Any], degree: str) -> str:
+    """Build a summary ONLY from fields we actually detected.
+
+    Never invent a degree. If we have no confirmed degree + branch + year,
+    return an empty string rather than fabricate ('B.Tech' defaulting was
+    a real source of hallucinated profiles — regression from IPM users).
+    """
     parts: List[str] = []
-    name = rec.get("name") or "Candidate"
+    name = rec.get("name")
+    if not name:
+        return ""
     parts.append(name)
-    if degree or rec.get("branch"):
-        parts.append(f"studying {degree or 'B.Tech'} {rec.get('branch') or ''}".strip())
+
+    # Only mention academic details we actually extracted — no defaults.
+    academic_bits: List[str] = []
+    if degree:
+        academic_bits.append(degree)
+    if rec.get("branch"):
+        academic_bits.append(rec["branch"])
+    if academic_bits:
+        parts.append("studying " + " ".join(academic_bits))
+
     if rec.get("year"):
         parts.append(f"graduating {rec['year']}")
     if rec.get("cgpa"):
@@ -957,6 +995,11 @@ def _synth_summary(rec: Dict[str, Any], degree: str) -> str:
     top_skills = (rec.get("skills") or [])[:3]
     if top_skills:
         parts.append("skilled in " + ", ".join(top_skills))
+
+    # If the ONLY thing we have is a name, don't synthesise a summary —
+    # an orphaned name isn't useful and reads as placeholder in the UI.
+    if len(parts) <= 1:
+        return ""
     return ". ".join(parts)[:500]
 
 
@@ -993,7 +1036,15 @@ def _join_projects_text(projects: List[Dict[str, Any]], experiences: List[Dict[s
 
 
 def _join_summary_text(rec: Dict[str, Any], degree: str) -> str:
-    parts: List[str] = [rec.get("summary") or _synth_summary(rec, degree)]
+    """Build embedding-text summary from real fields only.
+
+    Does NOT synthesise when data is thin — it would add noise to the vector
+    and surface as hallucinated text in student profile views.
+    """
+    parts: List[str] = []
+    explicit = rec.get("summary") or _synth_summary(rec, degree)
+    if explicit:
+        parts.append(explicit)
     if rec.get("domain_preferences"):
         parts.append("Domains: " + ", ".join(rec["domain_preferences"]))
     if rec.get("achievements"):

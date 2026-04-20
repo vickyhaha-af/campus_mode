@@ -31,7 +31,7 @@ from services.gemini_client import make_client  # type: ignore
 from config import GEMINI_API_KEY_1, GEMINI_FLASH_MODEL, MAX_RETRIES, API_CALL_DELAY_SECONDS  # type: ignore
 
 
-RICH_EXTRACT_PROMPT = """You are a resume analyser for a college placement system. Extract EVERYTHING the schema asks for from the resume text below, and return ONLY raw JSON (no markdown, no code fences, no explanation).
+RICH_EXTRACT_PROMPT = """You are a resume analyser for an INDIAN college placement system. Extract EVERYTHING the schema asks for from the resume text below, and return ONLY raw JSON (no markdown, no code fences, no explanation).
 
 Resume text:
 {text}
@@ -42,7 +42,9 @@ Return this exact JSON structure:
     "email": "Email if present in text, else empty string",
     "phone": "Phone if present, else empty string",
     "roll_no": "College roll number if present, else empty string",
-    "branch": "Academic branch abbreviation — e.g. CSE, ECE, ME, IT, EE, Chem, Civil, MBA, MSc — if present",
+    "branch": "Degree/branch abbreviation — must be a SHORT abbrev, never a full phrase. Valid values include: CSE, ECE, EE, EEE, ME, IT, Chem, Civil, Aero, Bio, AI/ML, DS, MBA, PGDM, IPM, BBA, BBM, BMS, B.Com, M.A., MSc, MTech, BSc, CA, CFA, ICWA",
+    "institution_name": "Name of the most recent/primary institution (university/college/B-school). Use the canonical form when possible (e.g. 'IIM Ranchi', 'IIT Bombay', 'BITS Pilani', 'NIT Trichy', 'VIT Vellore'). Leave empty string if unclear.",
+    "institution_tier": "One of tier_1 | tier_2 | tier_3 | null. Leave null unless the institution_name matches a well-known Indian college. tier_1 = IITs, top NITs, IIMs (incl. IIM Ranchi), BITS, IISc, IIIT-Hyderabad/Delhi, AIIMS, ISI, ISB, XLRI, FMS Delhi, SPJIMR, JBIMS, MDI Gurgaon. tier_2 = remaining IIMs/NITs, VJTI, COEP, DTU, NSUT, DAIICT, VIT, Manipal, MICA, Great Lakes, SCMHRD, IIFT, IMT, IRMA, XIMB, NMIMS Mumbai. tier_3 = Anna University, JNTU, Thapar, Amity, Chitkara, LPU, Symbiosis, RVCE, PES, SRM, VIT-Bhopal, KIIT, SASTRA, etc.",
     "year": 2026,
     "cgpa": 0.0,
     "backlogs_active": 0,
@@ -55,10 +57,10 @@ Return this exact JSON structure:
         {{"name": "Project name", "description": "1-2 sentence description", "tech": ["tech1","tech2"], "impact": "Outcome / metric if stated"}}
     ],
     "internships": [
-        {{"company": "Company", "role": "Role", "duration": "e.g. May–Jul 2024", "description": "What they did"}}
+        {{"company": "Company", "role": "Role", "duration": "e.g. May–Jul 2024", "description": "What they did", "company_tier": "tier_1_company | tier_2 | tier_3"}}
     ],
     "work_experience": [
-        {{"company": "Company", "role": "Role", "duration": "...", "description": "..."}}
+        {{"company": "Company", "role": "Role", "duration": "...", "description": "...", "company_tier": "tier_1_company | tier_2 | tier_3"}}
     ],
     "experience_years": 0.0,
     "education": [
@@ -66,6 +68,16 @@ Return this exact JSON structure:
     ],
     "certifications": ["cert1", "cert2"],
     "achievements": ["Won X", "Ranked Y"],
+    "indian_credentials": {{
+        "jee_rank": "AIR if JEE Advanced/Main rank stated, else empty",
+        "neet_rank": "AIR if NEET rank stated, else empty",
+        "cat_percentile": "percentile if CAT score stated, else empty",
+        "kvpy_fellow": false,
+        "ntse_scholar": false,
+        "olympiads": ["Any Math/Physics/Chemistry/Informatics Olympiad mentions"],
+        "cp_rank": "Codeforces/Leetcode/AtCoder rating if stated, else empty",
+        "icpc": "Regional/World finalist mention if any, else empty"
+    }},
     "passions": ["What they seem to genuinely care about — inferred from project choices, extracurriculars, tone. Use concrete phrases like 'open-source', 'edtech', 'sustainability', 'competitive coding'. 3-6 items."],
     "interests": ["Hobbies, clubs, non-academic pursuits — e.g. 'debate', 'classical music', 'photography', 'football'. 3-6 items."],
     "personality_hints": {{
@@ -95,14 +107,50 @@ Return this exact JSON structure:
     "summary_text": "Paragraph blending everything — used for embedding. Include domain preferences, achievements, personality signal."
 }}
 
+BRANCH RULES (IMPORTANT — Indian context):
+- IPM = Integrated Program in Management (5-year bachelor's + master's at IIM Indore / IIM Rohtak / IIM Ranchi). NEVER map IPM → MBA. Emit branch="IPM".
+- BBA / BBM / BMS / B.Com are valid undergrad commerce/management branches — keep them as-is, do NOT collapse to MBA.
+- PGDM is a 2-year post-grad diploma, treat distinctly from MBA even though industry-equivalent.
+- CA (Chartered Accountancy), CFA, ICWA are professional qualifications — use those abbreviations.
+- Branch MUST be an abbreviation, never a long phrase. If the resume only says "Computer Science and Engineering", emit "CSE".
+
+YEAR-OF-GRADUATION RULES:
+- Use the year from "Expected graduation", "Class of", "Graduating", "Batch of", or the explicit end-year on the most recent degree line.
+- Do NOT infer year from internship end-dates or project years — those are unrelated.
+- If unclear or missing, set year to null.
+
+INDIAN-SPECIFIC SKILLS to actively look for (include in skills list when present, verbatim where possible):
+- Accounting/finance tools: Tally, GST, SAP, Excel-advanced, SEBI knowledge, CA/CFA/ICWA study-progress
+- DSA / CP: data-structures-algorithms, competitive-programming, ICPC, Codeforces, Leetcode, CP-rank (e.g. "CF Expert 1600+")
+- Exam credentials: JEE rank, NEET rank, KVPY, NTSE, math/physics/chem/informatics Olympiads
+- Indian-ML stacks are common — scikit-learn, PyTorch, Tensorflow, LangChain
+
+INTERNSHIP / WORK TIERING (classify each entry via its `company_tier`):
+- tier_1_company: Goldman Sachs, Morgan Stanley, JPM, McKinsey, BCG, Bain (MBB), Top IBs (GS / MS / Citi / DB / Barclays), MAANG (Meta, Apple, Amazon, Netflix, Google), Microsoft, Adobe, top Indian startups that IIT grads chase: Zepto, Zomato, Swiggy, Razorpay, Cred, PhonePe, Paytm, Flipkart, Myntra, Uber, Rippling, Sarvam, Two Sigma, Jane Street, D.E. Shaw, Optiver
+- tier_2: reputable mid-tier product companies & IB 2nd-tier (Cognizant Consulting, PwC, Deloitte, KPMG, EY; Zoho, Freshworks, InMobi, Postman, Atlassian, Salesforce India; strategy/product internships at well-known startups)
+- tier_3: generic IT services (TCS, Infosys, Wipro, HCL, Accenture, Capgemini) for entry-level roles; or unknown / small startups
+
+ACHIEVEMENT_WEIGHT CALIBRATION (examples, scored on a 0.0–1.0 scale):
+- ICPC World Finalist = 0.95
+- KVPY Fellow = 0.80
+- International Olympiad medal (IMO/IOI/IPhO/IChO bronze or higher) = 0.90
+- NTSE Scholar = 0.70
+- State-level Math/Physics olympiad = 0.60
+- Hackathon win at top college (Inter-IIT / Smart India Hackathon National) = 0.50
+- Ordinary hackathon win = 0.20
+- CGPA 9.5+ with no other signal = 0.40
+- Strong tier_1_company internship = 0.60 (one internship alone)
+- Published paper at reputable conference (NeurIPS / ACL / ICLR / KDD / EMNLP) = 0.85
+- No documented achievements = 0.10
+Combine multiple — cap at 0.98.
+
 Scoring rules for inferred fields (personality_hints, role_fit_signals, achievement_weight):
 - Be CALIBRATED. Do not default to 0.5 or 0.7 for everything.
 - 0.0 = no evidence, 0.3 = weak signal, 0.6 = clear signal, 0.9 = strong signal backed by multiple data points.
-- achievement_weight is a holistic 0-1 score: tier of achievements × scope × verifiability. A student with "won national hackathon + published paper + 2 internships at top firms" is 0.85+. A blank slate is 0.1.
 
 Extraction rules:
 - Extract literal values verbatim (name, email, cgpa, backlogs).
-- If a field is truly missing, use empty string / empty list / 0 / 0.0.
+- If a field is truly missing, use empty string / empty list / 0 / 0.0 / null as appropriate.
 - For branch, normalise to standard abbreviation (CSE not "Computer Science and Engineering").
 - For experience_years, SUM all internship durations + work experience in years.
 - Return ONLY the JSON object. No preamble, no postamble, no markdown fences."""
@@ -114,6 +162,8 @@ FALLBACK: Dict[str, Any] = {
     "phone": "",
     "roll_no": "",
     "branch": "",
+    "institution_name": "",
+    "institution_tier": None,
     "year": None,
     "cgpa": None,
     "backlogs_active": 0,
@@ -129,6 +179,7 @@ FALLBACK: Dict[str, Any] = {
     "education": [],
     "certifications": [],
     "achievements": [],
+    "indian_credentials": {},
     "passions": [],
     "interests": [],
     "personality_hints": {},
@@ -325,7 +376,118 @@ def extract_rich_profile(resume_text: str) -> Dict[str, Any]:
                 obj[k] = _clamp01(v)
         merged[bucket] = obj
 
+    # --- Indian-context post-processing -------------------------------------
+    # 1. Cross-check / fill institution_tier via our in-repo knowledge base.
+    #    We trust the classifier over the LLM when there's a confident match,
+    #    since LLMs routinely confuse similar-sounding Indian colleges.
+    try:
+        from .institutions import classify as _classify_institution  # type: ignore
+        inst_name = (merged.get("institution_name") or "").strip()
+        if not inst_name:
+            # Try extracting from education[].institution if LLM put it there.
+            edu = merged.get("education") or []
+            if edu and isinstance(edu, list):
+                first = edu[0] if edu else {}
+                if isinstance(first, dict):
+                    inst_name = (first.get("institution") or "").strip()
+                    if inst_name:
+                        merged["institution_name"] = inst_name
+        classified = _classify_institution(inst_name) if inst_name else None
+        llm_tier = merged.get("institution_tier")
+        if classified:
+            # Classifier is authoritative: LLM sometimes mislabels
+            # "IIM Ranchi" as tier_2 etc.
+            merged["institution_tier"] = classified
+        elif llm_tier in ("tier_1", "tier_2", "tier_3"):
+            # Keep whatever the LLM supplied if we can't classify.
+            merged["institution_tier"] = llm_tier
+        else:
+            merged["institution_tier"] = None
+    except Exception:  # noqa: BLE001
+        # Never let post-processing break the extraction.
+        merged.setdefault("institution_tier", None)
+        merged.setdefault("institution_name", "")
+
+    # 2. Validate branch — reject long phrases, collapse to abbreviation where
+    #    possible. This prevents the UI from showing 'Computer Science and
+    #    Engineering' while the DB schema expects a short tag.
+    merged["branch"] = _normalise_branch(merged.get("branch"))
+
+    # 3. Ensure indian_credentials is always a dict (LLM can omit on short
+    #    resumes) — empty dict is safer than None for downstream consumers.
+    if not isinstance(merged.get("indian_credentials"), dict):
+        merged["indian_credentials"] = {}
+
     return merged
+
+
+# Valid short-form branch abbreviations (used by _normalise_branch below).
+_VALID_BRANCH_ABBREVS = {
+    "CSE", "ECE", "EE", "EEE", "ME", "IT", "CHEM", "CIVIL", "AERO", "BIO",
+    "AI/ML", "DS", "MBA", "PGDM", "IPM", "BBA", "BBM", "BMS", "B.COM",
+    "M.A.", "MA", "MSC", "MTECH", "M.TECH", "BSC", "B.SC", "BTECH", "B.TECH",
+    "CA", "CFA", "ICWA",
+}
+
+_BRANCH_LONGFORM_MAP = {
+    "computer science": "CSE",
+    "computer science and engineering": "CSE",
+    "information technology": "IT",
+    "electronics and communication": "ECE",
+    "electronics & communication": "ECE",
+    "electrical and electronics": "EEE",
+    "electrical engineering": "EE",
+    "mechanical engineering": "ME",
+    "civil engineering": "Civil",
+    "chemical engineering": "Chem",
+    "aerospace engineering": "Aero",
+    "aeronautical engineering": "Aero",
+    "biotechnology": "Bio",
+    "biomedical engineering": "Bio",
+    "data science": "DS",
+    "artificial intelligence": "AI/ML",
+    "artificial intelligence and machine learning": "AI/ML",
+    "ai and machine learning": "AI/ML",
+    "integrated program in management": "IPM",
+    "integrated programme in management": "IPM",
+    "master of business administration": "MBA",
+    "post graduate diploma in management": "PGDM",
+    "bachelor of business administration": "BBA",
+    "bachelor of business management": "BBM",
+    "bachelor of management studies": "BMS",
+    "bachelor of commerce": "B.Com",
+    "chartered accountancy": "CA",
+}
+
+
+def _normalise_branch(raw: Any) -> str:
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if not s:
+        return ""
+    # If it's already a sensible short abbrev, keep it.
+    upper_stripped = s.upper().replace("  ", " ")
+    if upper_stripped in _VALID_BRANCH_ABBREVS:
+        # Return with canonical casing where it matters.
+        if upper_stripped == "B.COM":
+            return "B.Com"
+        return s
+    if len(s) <= 10 and not re.search(r"\s", s):
+        # Short, single-word-ish — keep as emitted. Covers "CSE", "ECE", etc.
+        return s
+    # Long-form → map.
+    low = s.lower()
+    for phrase, abbr in _BRANCH_LONGFORM_MAP.items():
+        if phrase in low:
+            return abbr
+    # Last resort: take first short token that looks like an abbrev.
+    tokens = re.findall(r"[A-Z][A-Z/.]{1,6}", s)
+    for t in tokens:
+        if t.upper() in _VALID_BRANCH_ABBREVS:
+            return t
+    # Return trimmed first 12 chars so we never propagate a paragraph.
+    return s[:12]
 
 
 # ===========================================================================

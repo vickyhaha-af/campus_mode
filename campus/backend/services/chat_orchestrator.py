@@ -123,6 +123,54 @@ def _tool_declarations() -> List[types.Tool]:
                 required=["student_id", "drive_id"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="list_drives",
+            description=(
+                "List the college's drives with company info (name, tier) in compact form. "
+                "Use when the user mentions a role/company without pinning a specific drive, "
+                "or asks what drives are upcoming. Pass status='' to include all statuses."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "status": types.Schema(type="STRING", description="upcoming | in_progress | closed | cancelled; empty for all"),
+                    "limit": types.Schema(type="INTEGER"),
+                },
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="compare_students",
+            description=(
+                "Side-by-side comparison of 2+ students across cgpa, branch, top_skills, "
+                "top_role_fit, achievement_weight, institution_tier. If drive_id is supplied, "
+                "also includes fit signals + match_gaps per student. Use when asked 'compare A vs B' "
+                "or 'who's better for X'."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "student_ids": types.Schema(type="ARRAY", items=types.Schema(type="STRING")),
+                    "drive_id": types.Schema(type="STRING"),
+                },
+                required=["student_ids"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="match_drives_for_student",
+            description=(
+                "Reverse of explain_fit — given a student, return the top-N drives that best "
+                "match their profile (pgvector cosine). Use when asked 'which drives should I "
+                "push student X toward' or 'best roles for candidate Y'."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "student_id": types.Schema(type="STRING"),
+                    "limit": types.Schema(type="INTEGER"),
+                },
+                required=["student_id"],
+            ),
+        ),
     ])]
 
 
@@ -130,20 +178,43 @@ def _tool_declarations() -> List[types.Tool]:
 # System prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are TechVista Campus's matching assistant. You help placement committee (PC) admins pair students with visiting companies.
+SYSTEM_PROMPT = """You are TechVista Campus's matching assistant for Indian college placements. You help placement committee (PC) admins pair students with visiting companies.
 
-How you work:
-- You have tools: search_students, semantic_rank, fetch_drive, check_eligibility, get_student_profile, explain_fit.
-- For most queries you'll chain them: fetch_drive (if context) → search_students (filter) → semantic_rank (rank) → explain_fit (rationale for top few).
-- Always show your reasoning at the end and justify WHY your top picks fit — cite skills, passions, personality signals, achievements.
-- Keep responses focused. A ranked shortlist of 5–15 with one-line rationale per candidate is the typical ideal.
-- When a drive context is pinned (provided in system context), use it automatically. No need for the user to paste JD text.
+Your tools:
+- search_students — structured filter (branch, year, cgpa, etc.)
+- semantic_rank — rank students by semantic fit against a JD or query (pgvector cosine)
+- fetch_drive — load a drive's JD + eligibility
+- check_eligibility — verify one student vs one drive's rules
+- get_student_profile — full profile of one student
+- explain_fit — factual signals for a student-drive pair (source material, not prose)
+- list_drives — compact list of the college's drives with company tier
+- compare_students — side-by-side comparison on cgpa / skills / role_fit / institution_tier (+ drive fit if drive_id given)
+- match_drives_for_student — reverse of explain_fit: top drives for a given student
 
-Compliance rules (IMPORTANT):
-- If the user asks you to filter by gender, age, or other protected attributes WITHOUT a pinned drive that has that eligibility rule explicitly set, apply the filter but surface a compliance warning to the user and note it is being logged for review. Indian employment equity norms apply.
-- If a drive has gender_restriction set in its eligibility_rules, it carries a justification — apply it cleanly and do not warn.
+How you chain them:
+- Drive context pinned? Start from fetch_drive → search_students (filter) → semantic_rank → explain_fit on top picks.
+- User mentioned a role/company but no drive pinned? Call list_drives FIRST to find the right drive, then proceed.
+- "Compare A vs B" / "who's better for X" → compare_students (with drive_id if X is a drive).
+- "Which drives suit student Y?" → match_drives_for_student.
 
-Tone: concise, professional, direct. Use bullet points for lists. Never apologise for using tools — they are your job."""
+Behaviour:
+- ASK CLARIFYING QUESTIONS when the query is ambiguous. E.g. if the user says "top candidates", ask "top candidates for which drive?". Don't guess — one short clarifying question beats five wrong tool calls.
+- SUGGEST FOLLOW-UPS at the end of every non-trivial response. Examples: "Want me to draft interview invites for the top 3?", "Should I compare Aarav and Meera head-to-head?", "Want me to also check eligibility against the Goldman drive?".
+- Use list_drives PROACTIVELY whenever the user mentions a role (e.g. "backend engineer") without a drive_id — so you're matching against a real JD, not a guess.
+- Always CITE 2–3 SPECIFIC SIGNALS per candidate — e.g. "Aarav: NeurIPS paper + PyTorch + MSR India intern", not "good fit for ML role". The signals should come from explain_fit / get_student_profile output, not invented.
+
+Indian context (IMPORTANT):
+- Students from IIT / NIT / IIM / BITS / IISc / IIIT-H/D / XLRI (tier_1 institutions) have stronger academic signals but LESS raw CGPA variance — a 7.8 at IIT Bombay often beats a 9.3 at an unknown college. Don't rank by CGPA alone.
+- Prioritise role_fit_signals + institution_tier + achievement_weight TOGETHER, not any one in isolation. A candidate with achievement_weight=0.9 and tier_1 institution outranks a CGPA-9.5 tier_3 candidate for most premium drives.
+- IPM (Integrated Program in Management — IIM Indore/Rohtak/Ranchi) is a 5-year management degree, not an engineering branch. Treat IPM students as MBA-track for business/consulting drives.
+- For finance/IB/quant drives, JEE AIR + KVPY + Olympiad medals + competitive-programming ranks (Codeforces, ICPC) are strong positive signals — surface them explicitly when present.
+- For consulting drives, case-competition wins + B-school brand (tier_1_company internship at BCG/McKinsey/Bain) matter more than CGPA.
+
+Compliance rules:
+- If the user filters by gender / age / other protected attributes WITHOUT a pinned drive that explicitly requires it, apply the filter but surface a compliance warning and note it is being logged for review. Indian employment equity norms apply.
+- If a drive has gender_restriction set in its eligibility_rules, it's justified — apply cleanly, no warning.
+
+Tone: concise, professional, direct. Bullet points for lists. A ranked shortlist of 5–15 with 1-line rationale per candidate is the typical ideal. Never apologise for using tools — they are your job."""
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +435,63 @@ def _openai_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_drives",
+                "description": (
+                    "List the college's drives with company info (name, tier) in compact form. "
+                    "Use when the user mentions a role/company without pinning a drive, or asks "
+                    "what drives are upcoming. Pass status='' for all statuses."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "description": "upcoming | in_progress | closed | cancelled; empty for all"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "compare_students",
+                "description": (
+                    "Side-by-side comparison of 2+ students across cgpa, branch, top_skills, "
+                    "top_role_fit, achievement_weight, institution_tier. If drive_id is supplied, "
+                    "also includes fit signals + match_gaps per student. Use when asked "
+                    "'compare A vs B' or 'who's better for X'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "student_ids": {"type": "array", "items": {"type": "string"}},
+                        "drive_id": {"type": "string"},
+                    },
+                    "required": ["student_ids"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "match_drives_for_student",
+                "description": (
+                    "Reverse of explain_fit — given a student, return the top-N drives that best "
+                    "match their profile (pgvector cosine). Use when asked 'which drives should "
+                    "I push student X toward' or 'best roles for candidate Y'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "student_id": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["student_id"],
+                },
+            },
+        },
     ]
 
 
@@ -497,7 +625,7 @@ async def run_agent_stream(
                         else:
                             try:
                                 call_args = dict(tc.get("args") or {})
-                                if tc["name"] in ("search_students", "semantic_rank") and "college_id" not in call_args:
+                                if tc["name"] in ("search_students", "semantic_rank", "list_drives") and "college_id" not in call_args:
                                     call_args["college_id"] = college_id
                                 tool_result = await asyncio.to_thread(fn, **call_args)
                             except TypeError as te:
@@ -595,7 +723,7 @@ async def run_agent_stream(
                         try:
                             # Inject college_id where the tool needs it but the LLM didn't pass it
                             call_args = dict(tc["args"] or {})
-                            if tc["name"] in ("search_students", "semantic_rank") and "college_id" not in call_args:
+                            if tc["name"] in ("search_students", "semantic_rank", "list_drives") and "college_id" not in call_args:
                                 call_args["college_id"] = college_id
                             result = await asyncio.to_thread(fn, **call_args)
                         except TypeError as te:

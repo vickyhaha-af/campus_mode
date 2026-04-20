@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
-  ArrowRight, Shield, BarChart3, Target, Play, Zap, Scale, ArrowUpRight, CheckCircle
+  ArrowRight, Shield, BarChart3, Target, Play, Zap, Scale, ArrowUpRight, CheckCircle,
+  GraduationCap,
 } from 'lucide-react'
 import MagneticButton from '../components/MagneticButton'
 import SpotlightCard from '../components/SpotlightCard'
@@ -67,6 +69,16 @@ export default function LandingPage({ onStart }) {
           }}>by M S Vikram</span>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <Link to="/campus" style={{
+            fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--sage-dim)',
+            textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 14px', borderRadius: 8,
+            background: 'var(--sage-light)', border: '1px solid var(--sage-pale)',
+            fontWeight: 500, transition: 'all 150ms',
+          }} onMouseOver={e => { e.currentTarget.style.background = 'var(--sage)'; e.currentTarget.style.color = 'var(--white)' }}
+             onMouseOut={e => { e.currentTarget.style.background = 'var(--sage-light)'; e.currentTarget.style.color = 'var(--sage-dim)' }}>
+            <GraduationCap size={13} /> Campus Mode <ArrowUpRight size={11} />
+          </Link>
           <a href={`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/docs`} target="_blank" rel="noopener noreferrer" style={{
             fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--slate-mid)',
             textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4,
@@ -160,7 +172,7 @@ export default function LandingPage({ onStart }) {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.8 }}
-            style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 48 }}
+            style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 20 }}
           >
             <MagneticButton className="btn-primary" onClick={onStart} style={{ padding: '14px 32px', fontSize: 16 }} glow>
               Start Screening <ArrowRight size={18} />
@@ -171,6 +183,40 @@ export default function LandingPage({ onStart }) {
             }} style={{ padding: '14px 32px', fontSize: 16 }}>
               <Play size={16} /> See Demo Results
             </MagneticButton>
+          </motion.div>
+
+          {/* Campus Mode callout — different user, different workflow */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.95 }}
+            style={{ marginBottom: 40 }}
+          >
+            <Link to="/campus" style={{ textDecoration: 'none' }}>
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 10,
+                padding: '10px 20px', borderRadius: 999,
+                background: 'var(--cream-mid)', border: '1px dashed var(--sage)',
+                fontFamily: 'var(--font-sans)', fontSize: 14, color: 'var(--sage-dim)',
+                transition: 'all 150ms', cursor: 'pointer',
+              }}
+                onMouseOver={e => {
+                  e.currentTarget.style.background = 'var(--sage)'
+                  e.currentTarget.style.color = 'var(--white)'
+                  e.currentTarget.style.borderStyle = 'solid'
+                }}
+                onMouseOut={e => {
+                  e.currentTarget.style.background = 'var(--cream-mid)'
+                  e.currentTarget.style.color = 'var(--sage-dim)'
+                  e.currentTarget.style.borderStyle = 'dashed'
+                }}>
+                <GraduationCap size={16} />
+                <span>
+                  <strong>For college placement cells</strong> — try <strong>Campus Mode</strong>
+                </span>
+                <ArrowRight size={14} />
+              </div>
+            </Link>
           </motion.div>
 
           {/* Trust badges */}

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { UploadCloud, FileText, X, CheckCircle, AlertTriangle, Play } from 'lucide-react'
+import { UploadCloud, FileText, X, CheckCircle, AlertTriangle, Play, Info } from 'lucide-react'
 import { startIngest, pollIngest } from '../api'
 import CampusNav from '../components/CampusNav'
 
@@ -9,6 +9,7 @@ const POLL_MS = 2500
 
 export default function BulkIngestPage() {
   const collegeId = localStorage.getItem('campus_college_id')
+  const isDemo = localStorage.getItem('campus_demo_mode') === '1'
   const [files, setFiles] = useState([])
   const [job, setJob] = useState(null)
   const [err, setErr] = useState('')
@@ -56,6 +57,21 @@ export default function BulkIngestPage() {
           Drop up to 150 resumes (PDF or DOCX). Each gets parsed, enriched with nuance (passions, personality, role-fit), and embedded for later matching. Target: &lt;5 min per 100 resumes on free-tier Gemini.
         </p>
 
+        {isDemo && (
+          <div style={{
+            background: 'var(--sage-light)', border: '1px solid var(--sage-pale)',
+            borderRadius: 'var(--radius-card)', padding: 14, marginBottom: 20,
+            display: 'flex', gap: 10, alignItems: 'flex-start',
+          }}>
+            <Info size={16} color="var(--sage-dim)" style={{ marginTop: 2, flexShrink: 0 }} />
+            <div style={{ fontSize: 14, color: 'var(--sage-dim)' }}>
+              <strong>Demo mode — ingest is disabled.</strong>{' '}
+              20 students are already pre-loaded so you can explore the matching pipeline.
+              To ingest real resumes, <Link to="/campus/setup" style={{ color: 'var(--sage)', fontWeight: 500 }}>create a college</Link> (2 min).
+            </div>
+          </div>
+        )}
+
         {err && <ErrorBox>{err}</ErrorBox>}
 
         {!job ? (
@@ -102,9 +118,12 @@ export default function BulkIngestPage() {
               </div>
             )}
 
-            <button onClick={handleStart} disabled={!files.length}
-              style={{ ...primaryBtn, marginTop: 20, opacity: files.length ? 1 : 0.5, cursor: files.length ? 'pointer' : 'not-allowed' }}>
-              <Play size={16} /> Start ingest
+            <button
+              onClick={handleStart}
+              disabled={!files.length || isDemo}
+              title={isDemo ? 'Disabled in demo mode' : undefined}
+              style={{ ...primaryBtn, marginTop: 20, opacity: (files.length && !isDemo) ? 1 : 0.5, cursor: (files.length && !isDemo) ? 'pointer' : 'not-allowed' }}>
+              <Play size={16} /> {isDemo ? 'Start ingest (demo — disabled)' : 'Start ingest'}
             </button>
           </>
         ) : (

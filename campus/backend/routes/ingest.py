@@ -14,6 +14,7 @@ import asyncio
 
 from ..db import T_INGEST, insert, select_one
 from ..services.profile_enricher import ResumeFile, run_ingest_job
+from ..services.demo_store import is_demo
 
 
 router = APIRouter(prefix="/api/campus/ingest", tags=["campus:ingest"])
@@ -33,6 +34,14 @@ async def ingest_resumes(
     college_id: str = Form(...),
     files: List[UploadFile] = File(...),
 ):
+    # Demo mode has 20 pre-loaded students — ingest would 500 on FK violation
+    # since the demo college only exists in-memory, not in Supabase.
+    if is_demo(college_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Demo mode is read-only. 20 students are already pre-loaded. To ingest real resumes, create a college via /campus/setup first.",
+        )
+
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
     if len(files) > MAX_BATCH:

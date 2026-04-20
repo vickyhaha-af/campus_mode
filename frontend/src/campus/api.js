@@ -73,11 +73,19 @@ export const loadDemo = () => campus.get('/demo')
 
 // ---------- shortlists ----------
 export const listShortlists = (drive_id) => campus.get(`/shortlists?drive_id=${drive_id}`)
+export const listShortlistsByStudent = (student_id) =>
+  campus.get(`/shortlists?student_id=${encodeURIComponent(student_id)}`)
 export const bulkShortlist = (drive_id, student_ids) =>
   campus.post('/shortlists/bulk', { drive_id, student_ids })
 export const changeShortlistStage = (shortlist_id, stage) =>
   campus.post(`/shortlists/${shortlist_id}/stage`, { stage })
 export const removeShortlist = (shortlist_id) => campus.delete(`/shortlists/${shortlist_id}`)
+
+// ---------- recruiter tokens ----------
+export const createRecruiterToken = (drive_id, recruiter_email) =>
+  campus.post('/recruiter/tokens', { drive_id, recruiter_email })
+export const getRecruiterView = (token) =>
+  campus.get(`/recruiter/view?token=${encodeURIComponent(token)}`)
 
 // ---------- chat ----------
 export const createChatSession = (college_id, context_drive_id = null) =>

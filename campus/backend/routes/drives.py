@@ -8,12 +8,18 @@ auditable rather than silent.
 """
 from __future__ import annotations
 
+import csv
+import io
+import re
+from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
 
-from ..db import T_DRIVES, insert, select_one, select_many, update, delete
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
+
+from ..db import T_DRIVES, T_SHORTLISTS, T_STUDENTS, insert, select_one, select_many, update, delete
 from ..models.drive import Drive, DriveCreate, DriveUpdate, EligibilityRules
-from ..services.demo_store import is_demo, demo_drive_by_id, DEMO_DRIVES
+from ..services.demo_store import is_demo, demo_drive_by_id, demo_student_by_id, DEMO_DRIVES
 
 
 router = APIRouter(prefix="/api/campus/drives", tags=["campus:drives"])
@@ -92,3 +98,86 @@ async def remove_drive(drive_id: str):
         raise HTTPException(status_code=403, detail="Demo drives are read-only.")
     delete(T_DRIVES, drive_id)
     return {"status": "deleted"}
+
+
+# ---------- CSV export ----------
+
+def _slugify(value: str) -> str:
+    value = (value or "drive").lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
+    return value[:48] or "drive"
+
+
+@router.get("/{drive_id}/shortlist.csv")
+async def export_shortlist_csv(drive_id: str):
+    """
+    Stream a CSV of the drive's shortlist. Works for both real DB drives and
+    demo drives (pulls from the in-memory demo shortlist store).
+
+    Columns: name, email, branch, cgpa, stage, fit_score, rationale
+    """
+    demo = demo_drive_by_id(drive_id)
+
+    rows_out: list[list[str]] = []
+
+    if demo:
+        # Pull from demo shortlist store.
+        try:
+            from .shortlists import _DEMO_SHORTLISTS  # type: ignore
+            sl_rows = sorted(
+                (r for r in _DEMO_SHORTLISTS.values() if r.get("drive_id") == drive_id),
+                key=lambda r: r.get("rank") or 999,
+            )
+        except Exception:
+            sl_rows = []
+        for r in sl_rows:
+            s = demo_student_by_id(r.get("student_id")) or {}
+            rows_out.append([
+                s.get("name", "") or "",
+                s.get("email", "") or "",
+                s.get("branch", "") or "",
+                str(s.get("cgpa") if s.get("cgpa") is not None else ""),
+                r.get("stage", "") or "",
+                str(r.get("fit_score") if r.get("fit_score") is not None else ""),
+                (r.get("fit_rationale") or "").replace("\n", " "),
+            ])
+        drive = demo
+    else:
+        drive = select_one(T_DRIVES, {"id": drive_id})
+        if not drive:
+            raise HTTPException(status_code=404, detail="Drive not found")
+        sl_rows = select_many(T_SHORTLISTS, filters={"drive_id": drive_id}, order_by="rank") or []
+        for r in sl_rows:
+            sid = r.get("student_id")
+            s = select_one(T_STUDENTS, {"id": sid}) if sid else None
+            s = s or {}
+            rows_out.append([
+                s.get("name", "") or "",
+                s.get("email", "") or "",
+                s.get("branch", "") or "",
+                str(s.get("cgpa") if s.get("cgpa") is not None else ""),
+                r.get("stage", "") or "",
+                str(r.get("fit_score") if r.get("fit_score") is not None else ""),
+                (r.get("fit_rationale") or "").replace("\n", " "),
+            ])
+
+    # Build CSV in-memory and stream.
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["name", "email", "branch", "cgpa", "stage", "fit_score", "rationale"])
+    for row in rows_out:
+        w.writerow(row)
+    buf.seek(0)
+
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    slug = _slugify(f"{drive.get('role', '')}-{drive_id[:8]}")
+    filename = f"shortlist_{slug}_{today}.csv"
+
+    def iter_bytes():
+        yield buf.getvalue().encode("utf-8")
+
+    return StreamingResponse(
+        iter_bytes(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

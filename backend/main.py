@@ -91,6 +91,7 @@ try:
     from campus.backend.routes.chat import router as campus_chat_router
     from campus.backend.routes.demo import router as campus_demo_router
     from campus.backend.routes.shortlists import router as campus_shortlists_router
+    from campus.backend.routes.recruiter import router as campus_recruiter_router
 
     app.include_router(campus_colleges_router)
     app.include_router(campus_students_router)
@@ -100,6 +101,7 @@ try:
     app.include_router(campus_chat_router)
     app.include_router(campus_demo_router)
     app.include_router(campus_shortlists_router)
+    app.include_router(campus_recruiter_router)
 
     print("✓ Campus vertical routes registered under /api/campus/* (incl. chat + demo)")
 except Exception as _campus_err:  # pragma: no cover

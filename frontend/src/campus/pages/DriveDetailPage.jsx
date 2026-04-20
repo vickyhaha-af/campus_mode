@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   MapPin, Calendar, DollarSign, AlertTriangle, Briefcase,
   Check, X, ArrowLeft, FileText, ShieldCheck, Building2,
+  Share2, Download, Copy, Mail,
 } from 'lucide-react'
-import { getDrive } from '../api'
+import { getDrive, createRecruiterToken } from '../api'
 import CampusNav from '../components/CampusNav'
 import DriveShortlist from '../components/DriveShortlist'
 
@@ -172,9 +173,15 @@ export default function DriveDetailPage() {
       <div style={{ maxWidth: 960, margin: '0 auto', padding: '32px 24px 80px' }}>
         {/* Hero */}
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-          <Link to="/campus/drives" className="btn-ghost" style={{ marginBottom: 20, fontSize: 13, padding: '6px 10px 6px 4px' }}>
-            <ArrowLeft size={14} /> All drives
-          </Link>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: 12, flexWrap: 'wrap', marginBottom: 12,
+          }}>
+            <Link to="/campus/drives" className="btn-ghost" style={{ fontSize: 13, padding: '6px 10px 6px 4px' }}>
+              <ArrowLeft size={14} /> All drives
+            </Link>
+            <DriveActions driveId={drive.id} />
+          </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
             {drive.company?.tier && <TierBadge tier={drive.company.tier} />}
@@ -256,6 +263,229 @@ export default function DriveDetailPage() {
     </div>
   )
 }
+
+function DriveActions({ driveId }) {
+  const [showShare, setShowShare] = useState(false)
+
+  const downloadCsv = () => {
+    const base = (import.meta.env.VITE_API_URL || '/api') + '/campus'
+    const url = `${base}/drives/${driveId}/shortlist.csv`
+    window.location.href = url
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button
+        className="btn-ghost btn-sm"
+        onClick={downloadCsv}
+        title="Download shortlist as CSV"
+      >
+        <Download size={13} /> Export CSV
+      </button>
+      <button
+        className="btn-secondary btn-sm"
+        onClick={() => setShowShare(true)}
+        title="Generate a read-only share link for a recruiter"
+      >
+        <Share2 size={13} /> Share with recruiter
+      </button>
+      <AnimatePresence>
+        {showShare && (
+          <ShareRecruiterModal driveId={driveId} onClose={() => setShowShare(false)} />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+
+function ShareRecruiterModal({ driveId, onClose }) {
+  const [email, setEmail] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState('')
+  const [result, setResult] = useState(null)
+  const [copied, setCopied] = useState(false)
+
+  const generate = async (e) => {
+    e?.preventDefault()
+    if (!email.trim() || !email.includes('@')) {
+      setErr('Please enter a valid email.')
+      return
+    }
+    setErr(''); setLoading(true)
+    try {
+      const { data } = await createRecruiterToken(driveId, email.trim())
+      const url = `${window.location.origin}/campus/recruiter?token=${encodeURIComponent(data.token)}&drive=${driveId}`
+      setResult({ url, expires_at: data.expires_at })
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message || 'Could not create link')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const copyLink = async () => {
+    if (!result?.url) return
+    try {
+      await navigator.clipboard.writeText(result.url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    } catch {
+      // Fallback: select text
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    }
+  }
+
+  const fmtExpiry = (iso) => {
+    try { return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) }
+    catch { return iso }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(30, 35, 40, 0.45)',
+        backdropFilter: 'blur(2px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20,
+      }}
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 8, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 6, scale: 0.98 }}
+        transition={{ duration: 0.18 }}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--white)',
+          borderRadius: 14,
+          border: '1px solid var(--border)',
+          boxShadow: 'var(--shadow-lg)',
+          width: '100%', maxWidth: 480,
+          padding: 24,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div>
+            <div style={{
+              width: 36, height: 36, borderRadius: 10,
+              background: 'var(--gradient-sage-card)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              marginBottom: 10,
+            }}>
+              <Share2 size={16} color="var(--sage)" />
+            </div>
+            <h3 style={{
+              fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 700,
+              color: 'var(--ink)', letterSpacing: '-0.015em', marginBottom: 4,
+            }}>Share with recruiter</h3>
+            <p style={{ fontSize: 13, color: 'var(--slate)', lineHeight: 1.5 }}>
+              Generate a signed, read-only link for the recruiter to view this drive&apos;s shortlist.
+              Expires in 30 days.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="btn-ghost btn-sm"
+            style={{ padding: 6 }}
+            aria-label="Close"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {!result ? (
+          <form onSubmit={generate} style={{ marginTop: 16 }}>
+            <label style={{
+              display: 'block', fontSize: 11.5, fontWeight: 600,
+              color: 'var(--slate-mid)', marginBottom: 6,
+              letterSpacing: 0.4, textTransform: 'uppercase',
+            }}>Recruiter email</label>
+            <div style={{ position: 'relative', marginBottom: 12 }}>
+              <Mail size={14} style={{
+                position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+                color: 'var(--slate-mid)',
+              }} />
+              <input
+                type="email"
+                autoFocus
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="recruiter@company.com"
+                style={{
+                  width: '100%', padding: '10px 14px 10px 36px',
+                  fontSize: 14, border: '1px solid var(--border)',
+                  borderRadius: 10, background: 'var(--cream)',
+                  color: 'var(--ink)', fontFamily: 'inherit', outline: 'none',
+                }}
+              />
+            </div>
+            {err && (
+              <div style={{
+                marginBottom: 12, padding: '8px 10px', fontSize: 12.5,
+                background: 'var(--blush-pale)', color: 'var(--blush)',
+                border: '1px solid rgba(196,117,106,0.25)', borderRadius: 8,
+              }}>{err}</div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" className="btn-ghost btn-sm" onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn-primary btn-sm" disabled={loading}>
+                {loading ? 'Generating…' : 'Generate link'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div style={{ marginTop: 16 }}>
+            <label style={{
+              display: 'block', fontSize: 11.5, fontWeight: 600,
+              color: 'var(--slate-mid)', marginBottom: 6,
+              letterSpacing: 0.4, textTransform: 'uppercase',
+            }}>Share this URL with the recruiter</label>
+            <div style={{
+              display: 'flex', gap: 6, marginBottom: 10,
+              background: 'var(--cream)', padding: 8, borderRadius: 10,
+              border: '1px solid var(--border)',
+            }}>
+              <input
+                readOnly
+                value={result.url}
+                onFocus={(e) => e.target.select()}
+                style={{
+                  flex: 1, border: 'none', background: 'transparent',
+                  fontSize: 12.5, fontFamily: 'var(--font-mono)',
+                  color: 'var(--slate)', outline: 'none',
+                  padding: '0 4px',
+                }}
+              />
+              <button
+                className="btn-secondary btn-sm"
+                onClick={copyLink}
+                style={{ flexShrink: 0 }}
+              >
+                <Copy size={12} /> {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--slate-mid)', marginBottom: 18 }}>
+              Link expires on <strong>{fmtExpiry(result.expires_at)}</strong>.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => { setResult(null); setEmail('') }}
+              >Create another</button>
+              <button className="btn-primary btn-sm" onClick={onClose}>Done</button>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
+
 
 function Section({ icon: Icon, title, children }) {
   return (

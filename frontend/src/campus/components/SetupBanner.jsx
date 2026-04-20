@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { AlertTriangle, ExternalLink, ChevronDown, ChevronUp, CheckCircle } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { AlertTriangle, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react'
 import campus from '../api'
 
 /**
@@ -8,7 +9,7 @@ import campus from '../api'
  * In demo mode, stays hidden (demo doesn't need Supabase).
  */
 export default function SetupBanner() {
-  const isDemo = localStorage.getItem('campus_demo_mode') === '1'
+  const isDemo = typeof window !== 'undefined' && localStorage.getItem('campus_demo_mode') === '1'
   const [state, setState] = useState('checking') // checking | ok | needs_env | needs_schema
   const [expanded, setExpanded] = useState(false)
 
@@ -24,7 +25,7 @@ export default function SetupBanner() {
           if (detail.includes('tables') || detail.includes('schema')) setState('needs_schema')
           else setState('needs_env')
         } else {
-          setState('ok')  // other errors shouldn't block the UI
+          setState('ok')
         }
       }
     })()
@@ -33,77 +34,133 @@ export default function SetupBanner() {
   if (state !== 'needs_env' && state !== 'needs_schema') return null
 
   return (
-    <div style={{
-      background: 'var(--blush-pale)', border: '1px solid var(--blush-light)',
-      borderRadius: 'var(--radius-card)', padding: 14, marginBottom: 24,
-    }}>
+    <motion.div
+      initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+      style={{
+        background: 'linear-gradient(135deg, var(--blush-pale) 0%, var(--accent-warm-pale) 100%)',
+        border: '1px solid rgba(196,117,106,0.25)',
+        borderRadius: 14,
+        padding: 16,
+        marginBottom: 24,
+        boxShadow: 'var(--shadow-sm)',
+      }}
+    >
       <div
         onClick={() => setExpanded(!expanded)}
-        style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
+        style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
       >
-        <AlertTriangle size={16} color="var(--blush)" />
-        <span style={{ fontSize: 14, color: 'var(--blush)', fontWeight: 500, flex: 1 }}>
+        <motion.div
+          animate={{ rotate: [0, -10, 10, -10, 0] }}
+          transition={{ duration: 1.8, repeat: Infinity, repeatDelay: 3, ease: 'easeInOut' }}
+          style={{
+            width: 32, height: 32, borderRadius: 9,
+            background: 'var(--blush-light)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <AlertTriangle size={15} color="var(--blush)" />
+        </motion.div>
+        <span style={{ fontSize: 14, color: 'var(--ink)', fontWeight: 600, flex: 1 }}>
           {state === 'needs_schema'
             ? 'Supabase connected — tables missing. Run campus/schema.sql to finish setup.'
-            : 'Supabase not configured — set it up to enable real persistence'}
+            : 'Supabase not configured — set it up to enable real persistence.'}
         </span>
-        {expanded ? <ChevronUp size={14} color="var(--blush)" /> : <ChevronDown size={14} color="var(--blush)" />}
+        <button
+          className="btn-ghost"
+          style={{ padding: 6, fontSize: 12 }}
+          onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+        >
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
       </div>
-      {expanded && state === 'needs_schema' && (
-        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--blush-light)', color: 'var(--slate)', fontSize: 13, lineHeight: 1.6 }}>
-          <p style={{ marginBottom: 12 }}>Your keys work and the connection is live — you just need to create the tables. Two files, one Supabase SQL Editor tab:</p>
-          <Step n={1}>
-            Open your Supabase project → <em>SQL Editor</em> → paste the contents of <code style={code}>supabase_schema.sql</code> (parent Tech Vista tables) → Run.
-          </Step>
-          <Step n={2}>
-            New query tab → paste <code style={code}>campus/schema.sql</code> (campus vertical tables + RLS + pgvector indexes) → Run.
-          </Step>
-          <Step n={3}>
-            Reload this page. Real persistence is now live — you can create a college, upload resumes, and the chatbot's session memory will survive restarts.
-          </Step>
-        </div>
-      )}
-      {expanded && state === 'needs_env' && (
-        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--blush-light)', color: 'var(--slate)', fontSize: 13, lineHeight: 1.6 }}>
-          <p style={{ marginBottom: 10 }}>
-            Demo mode works without any setup. To create real colleges, ingest resumes, or persist chat sessions, you need a free Supabase project (~5 minutes).
-          </p>
-          <Step n={1}>
-            Create a free project at{' '}
-            <a href="https://supabase.com" target="_blank" rel="noreferrer" style={link}>supabase.com <ExternalLink size={11} /></a>
-          </Step>
-          <Step n={2}>
-            In the SQL Editor, run <code style={code}>supabase_schema.sql</code> (parent Tech Vista tables) then <code style={code}>campus/schema.sql</code> (campus tables).
-          </Step>
-          <Step n={3}>
-            Copy <code style={code}>Project URL</code> and <code style={code}>anon key</code> from <em>Project Settings → API</em>.
-          </Step>
-          <Step n={4}>
-            Paste into <code style={code}>.env</code> at repo root:
-            <pre style={{ background: 'var(--cream-mid)', padding: 10, borderRadius: 6, fontSize: 12, marginTop: 6, overflowX: 'auto' }}>
+
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div style={{
+              marginTop: 14, paddingTop: 14,
+              borderTop: '1px solid rgba(196,117,106,0.25)',
+              color: 'var(--slate)', fontSize: 13, lineHeight: 1.7,
+            }}>
+              {state === 'needs_schema' && (
+                <>
+                  <p style={{ marginBottom: 12 }}>
+                    Your keys work and the connection is live — you just need to create the tables. Two files, one Supabase SQL Editor tab:
+                  </p>
+                  <Step n={1}>Open Supabase → <em>SQL Editor</em> → paste <code style={code}>supabase_schema.sql</code> → Run.</Step>
+                  <Step n={2}>New query tab → paste <code style={code}>campus/schema.sql</code> → Run.</Step>
+                  <Step n={3}>Reload. Real persistence is now live.</Step>
+                </>
+              )}
+              {state === 'needs_env' && (
+                <>
+                  <p style={{ marginBottom: 10 }}>
+                    Demo mode works without any setup. To create real colleges, ingest resumes, or persist chat sessions, you need a free Supabase project (~5 minutes).
+                  </p>
+                  <Step n={1}>
+                    Create a free project at{' '}
+                    <a href="https://supabase.com" target="_blank" rel="noreferrer" style={link}>
+                      supabase.com <ExternalLink size={11} />
+                    </a>
+                  </Step>
+                  <Step n={2}>In SQL Editor, run <code style={code}>supabase_schema.sql</code> then <code style={code}>campus/schema.sql</code>.</Step>
+                  <Step n={3}>Copy <code style={code}>Project URL</code> and <code style={code}>anon key</code> from <em>Project Settings → API</em>.</Step>
+                  <Step n={4}>
+                    Paste into <code style={code}>.env</code>:
+                    <pre style={{
+                      background: 'var(--cream-mid)', padding: 10, borderRadius: 8,
+                      fontSize: 12, marginTop: 6, overflowX: 'auto',
+                      fontFamily: 'var(--font-mono)',
+                    }}>
 {`SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_ANON_KEY=...`}
-            </pre>
-          </Step>
-          <Step n={5}>Restart the backend and this banner disappears.</Step>
-        </div>
-      )}
-    </div>
+                    </pre>
+                  </Step>
+                  <Step n={5}>Restart the backend and this banner disappears.</Step>
+                </>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
 
 function Step({ n, children }) {
   return (
-    <div style={{ display: 'flex', gap: 10, marginBottom: 8, alignItems: 'flex-start' }}>
+    <div style={{ display: 'flex', gap: 10, marginBottom: 10, alignItems: 'flex-start' }}>
       <span style={{
-        width: 18, height: 18, borderRadius: 9, background: 'var(--blush-light)', color: 'var(--blush)',
-        fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-        fontWeight: 500, marginTop: 1,
+        width: 20, height: 20, borderRadius: '50%',
+        background: 'var(--blush)', color: '#fff',
+        fontSize: 11, fontWeight: 700,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexShrink: 0, marginTop: 1,
       }}>{n}</span>
       <div>{children}</div>
     </div>
   )
 }
 
-const code = { background: 'var(--cream-mid)', padding: '1px 5px', borderRadius: 3, fontFamily: 'var(--font-mono)', fontSize: 12 }
-const link = { color: 'var(--sage-dim)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 2 }
+const code = {
+  background: 'var(--cream-mid)',
+  padding: '2px 6px',
+  borderRadius: 4,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  color: 'var(--ink)',
+  border: '1px solid var(--border)',
+}
+const link = {
+  color: 'var(--sage-dim)', fontWeight: 600,
+  display: 'inline-flex', alignItems: 'center', gap: 3,
+  textDecoration: 'none',
+  borderBottom: '1.5px solid var(--sage-light)',
+}

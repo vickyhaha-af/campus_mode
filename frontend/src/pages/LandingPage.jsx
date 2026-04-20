@@ -86,7 +86,7 @@ export default function LandingPage({ onStart }) {
           }} onMouseOver={e => e.currentTarget.style.color = 'var(--ink)'} onMouseOut={e => e.currentTarget.style.color = 'var(--slate-mid)'}>
             API Docs <ArrowUpRight size={12} />
           </a>
-          <MagneticButton className="btn-primary" onClick={onStart}>
+          <MagneticButton className="btn-primary btn-sm" onClick={onStart}>
             Get Started <ArrowRight size={14} />
           </MagneticButton>
         </div>
@@ -174,13 +174,13 @@ export default function LandingPage({ onStart }) {
             transition={{ duration: 0.5, delay: 0.8 }}
             style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 20 }}
           >
-            <MagneticButton className="btn-primary" onClick={onStart} style={{ padding: '14px 32px', fontSize: 16 }} glow>
+            <MagneticButton className="btn-primary btn-lg" onClick={onStart} glow>
               Start Screening <ArrowRight size={18} />
             </MagneticButton>
-            <MagneticButton className="btn-secondary" onClick={() => {
+            <MagneticButton className="btn-secondary btn-lg" onClick={() => {
               window.dispatchEvent(new CustomEvent('load-demo'))
               onStart()
-            }} style={{ padding: '14px 32px', fontSize: 16 }}>
+            }}>
               <Play size={16} /> See Demo Results
             </MagneticButton>
           </motion.div>
@@ -411,13 +411,13 @@ export default function LandingPage({ onStart }) {
             marginBottom: 48, fontWeight: 400
           }}>No signup. No credit card. In your browser in 30 seconds.</p>
           <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <MagneticButton className="btn-primary" onClick={onStart} style={{ padding: '14px 32px', fontSize: 16 }} glow>
+            <MagneticButton className="btn-primary btn-lg" onClick={onStart} glow>
               Start Free Screening <ArrowRight size={18} />
             </MagneticButton>
-            <MagneticButton className="btn-secondary" onClick={() => {
+            <MagneticButton className="btn-secondary btn-lg" onClick={() => {
               window.dispatchEvent(new CustomEvent('load-demo'))
               onStart()
-            }} style={{ padding: '14px 32px', fontSize: 16 }}>
+            }}>
               <Play size={16} /> View Demo Results
             </MagneticButton>
           </div>

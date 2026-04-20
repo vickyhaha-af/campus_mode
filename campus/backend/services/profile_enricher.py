@@ -10,10 +10,14 @@ Flow per resume file:
     4. upsert into campus_students (full-replace semantics per PRD decision #4)
     5. update campus_ingest_jobs counters
 
-Email handling: email is extracted from the resume by the LLM. If the LLM
-can't find one, we synthesise a uniqueness-preserving placeholder of the
-form `pending+<sanitised-filename>@placeholder.local`. PC sees these in the
-dashboard and can fix them in v1.
+Robustness guarantees:
+    * Each resume finishes (success OR fallback) within ~5s of enrichment +
+      ~5s of embedding even under worst-case Gemini outage (circuit-breaker
+      open → direct regex/pseudo paths).
+    * Progress is committed after every resume so the UI can show liveness.
+    * Job terminates in {completed, failed, cancelled} — never stays "running".
+    * Every resume that produces *any* row counts as succeeded; a job is only
+      "failed" if literally zero resumes made it through.
 """
 from __future__ import annotations
 
@@ -37,6 +41,12 @@ from .rate_limiter import TokenBucket
 ENRICH_LIMITER = TokenBucket(rate_per_minute=14, capacity=14)
 # Embedding API quota is much higher (150+ RPM). 3 embeds per resume.
 EMBED_LIMITER = TokenBucket(rate_per_minute=120, capacity=120)
+
+# Per-step timeouts in seconds. Generous enough for a fast Gemini response but
+# short enough that a hung call never blocks the pipeline for more than ~5s.
+ENRICH_TIMEOUT_SEC = 6.0     # 5s Gemini budget + 1s slack for JSON parse / limiter
+EMBED_TIMEOUT_SEC = 6.0      # same idea, 3 embed calls fan out to pseudo if slow
+EXTRACT_TIMEOUT_SEC = 10.0   # PDF extraction can legitimately take a few seconds
 
 
 class ResumeFile:
@@ -118,40 +128,89 @@ def _rich_to_student_row(
 
 # ---------- per-resume pipeline ----------
 
+async def _enrich_with_fallback(text: str) -> Dict[str, Any]:
+    """Run the rich enricher with a hard timeout; on timeout, synthesise a
+    regex-only fallback directly (bypassing Gemini entirely)."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(extract_rich_profile, text),
+            timeout=ENRICH_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        # Import here to avoid a top-level import cycle risk; also keeps the
+        # "normal path" clean from the fallback helper.
+        from .enricher_llm import _fallback_with_text
+        rich = _fallback_with_text(text)
+        rich["_fallback_reason"] = "enrich_timeout"
+        return rich
+
+
+async def _embed_with_fallback(
+    skills_text: str,
+    projects_text: str,
+    summary_text: str,
+) -> Dict[str, Optional[List[float]]]:
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(embed_profile_texts, skills_text, projects_text, summary_text),
+            timeout=EMBED_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        from .campus_embedder import _pseudo
+        return {
+            "skills": _pseudo(skills_text) if skills_text else None,
+            "projects": _pseudo(projects_text) if projects_text else None,
+            "summary": _pseudo(summary_text) if summary_text else None,
+        }
+
+
 async def _process_one(
     job_id: str,
     college_id: str,
     rf: ResumeFile,
+    resume_idx: int,
 ) -> Tuple[bool, Optional[str]]:
+    short_jid = job_id[:8]
+
+    # ---- 1. Extract text ----
     try:
-        text = await asyncio.to_thread(extract_text, rf.content, rf.filename)
+        text = await asyncio.wait_for(
+            asyncio.to_thread(extract_text, rf.content, rf.filename),
+            timeout=EXTRACT_TIMEOUT_SEC,
+        )
     except Exception as e:
         return False, f"extract_text: {e}"
 
+    # ---- 2. Enrich (Gemini or regex fallback) ----
     try:
-        await ENRICH_LIMITER.acquire()
-        rich = await asyncio.to_thread(extract_rich_profile, text)
-    except Exception as e:
-        return False, f"enrich: {e}"
+        await asyncio.wait_for(ENRICH_LIMITER.acquire(), timeout=2.0)
+    except asyncio.TimeoutError:
+        # Limiter backpressure too long — skip the wait and go direct.
+        pass
+    rich = await _enrich_with_fallback(text)
+    fallback_reason = rich.pop("_fallback_reason", None)
 
+    # ---- 3. Embed (Gemini or pseudo fallback) ----
     try:
-        await EMBED_LIMITER.acquire(n=3)
-        emb = await asyncio.to_thread(
-            embed_profile_texts,
+        await asyncio.wait_for(EMBED_LIMITER.acquire(n=3), timeout=2.0)
+    except asyncio.TimeoutError:
+        pass
+    try:
+        emb = await _embed_with_fallback(
             rich.get("skills_text") or ", ".join(rich.get("skills") or []),
             rich.get("projects_text") or "",
             rich.get("summary_text") or rich.get("summary") or "",
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         emb = {"skills": None, "projects": None, "summary": None}
-        print(f"[ingest {job_id[:8]}] embed fail on {rf.filename}: {e}")
+        print(f"[ingest {short_jid}] embed fail on {rf.filename}: {e}")
 
+    # ---- 4. Build row and upsert ----
     row = _rich_to_student_row(college_id, rich, text, rf.filename)
     row["embedding_skills"] = emb.get("skills")
     row["embedding_projects"] = emb.get("projects")
     row["embedding_summary"] = emb.get("summary")
 
-    # Full-replace on (college_id, email) — PRD decision #4.
     try:
         existing = await asyncio.to_thread(
             select_one, T_STUDENTS,
@@ -166,6 +225,15 @@ async def _process_one(
     except Exception as e:
         return False, f"db_insert: {e}"
 
+    # ---- 5. Per-resume log line ----
+    mode = "llm" if not fallback_reason else "regex-fallback"
+    skills_n = len(rich.get("skills") or [])
+    projects_n = len(rich.get("projects") or [])
+    reason_str = f" (reason: {fallback_reason})" if fallback_reason else ""
+    print(
+        f"[ingest {short_jid}] resume {resume_idx}: {mode}{reason_str} "
+        f"— extracted {skills_n} skills, {projects_n} projects"
+    )
     return True, None
 
 
@@ -177,33 +245,65 @@ async def run_ingest_job(
     await _update_job(job_id, status="running")
     succeeded = 0
     failed = 0
+    short_jid = job_id[:8]
 
-    for rf in resumes:
-        try:
-            ok, err = await _process_one(job_id, college_id, rf)
-        except Exception as e:
-            ok, err = False, f"unhandled: {e}"
-            traceback.print_exc()
+    try:
+        for idx, rf in enumerate(resumes, start=1):
+            ok: bool
+            err: Optional[str]
+            try:
+                ok, err = await _process_one(job_id, college_id, rf, idx)
+            except Exception as e:  # noqa: BLE001
+                ok, err = False, f"unhandled: {e}"
+                traceback.print_exc()
 
-        if ok:
-            succeeded += 1
+            if ok:
+                succeeded += 1
+            else:
+                failed += 1
+                if err:
+                    await _record_error(job_id, rf.filename, err)
+                    print(f"[ingest {short_jid}] resume {idx}: FAILED — {err}")
+
+            # Commit progress after every resume so the UI polls see liveness,
+            # even under partial failure. Exceptions here are swallowed inside
+            # _update_job so they can never stall the loop.
+            await _update_job(
+                job_id,
+                processed=succeeded + failed,
+                succeeded=succeeded,
+                failed=failed,
+            )
+
+        # Terminal status: partial success still counts as completed; a job is
+        # only "failed" if every single resume was lost.
+        if succeeded == 0 and failed > 0:
+            final = "failed"
         else:
-            failed += 1
-            if err:
-                await _record_error(job_id, rf.filename, err)
-
+            final = "completed"
+    except asyncio.CancelledError:
         await _update_job(
             job_id,
+            status="cancelled",
             processed=succeeded + failed,
             succeeded=succeeded,
             failed=failed,
         )
+        raise
+    except Exception as e:  # noqa: BLE001
+        # Unexpected driver failure — mark failed so the job row never lingers
+        # in "running" forever.
+        traceback.print_exc()
+        await _record_error(job_id, "__driver__", f"driver: {e}")
+        await _update_job(
+            job_id,
+            status="failed",
+            processed=succeeded + failed,
+            succeeded=succeeded,
+            failed=failed,
+        )
+        print(f"[ingest {short_jid}] driver crashed: {e}")
+        return
 
-    if failed == 0:
-        final = "completed"
-    elif succeeded == 0:
-        final = "failed"
-    else:
-        final = "completed"  # partial success still counts as completed; errors array tells the story
     await _update_job(job_id, status=final)
-    print(f"[ingest {job_id[:8]}] done: {succeeded} ok, {failed} failed")
+    print(f"[ingest {short_jid}] done: {succeeded} ok, {failed} failed (status={final})")

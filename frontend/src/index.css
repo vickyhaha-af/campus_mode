@@ -1049,3 +1049,45 @@ html.dark .filter-pill {
   height: 12px;
   border-radius: 6px;
 }
+
+/* ========================================================================
+   Campus — mobile polish
+   ======================================================================== */
+
+/* Kanban lanes — horizontal scroll on small screens */
+@media (max-width: 768px) {
+  .campus-kanban-lanes {
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+  }
+  .campus-kanban-lanes > * {
+    scroll-snap-align: start;
+  }
+
+  /* Hero display text scales down */
+  .text-display-lg { font-size: clamp(28px, 7vw, 42px); }
+  .text-display    { font-size: clamp(22px, 6vw, 32px); }
+  .text-display-xl { font-size: clamp(36px, 9vw, 56px); }
+
+  /* Page padding tightens */
+  .campus-page { padding: 32px 16px 80px; }
+
+  /* Filter bars stack */
+  .campus-filter-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .campus-filter-bar > * { width: 100%; }
+
+  /* Tables render as stacked cards on mobile */
+  .campus-table-row {
+    grid-template-columns: 1fr !important;
+    gap: 4px !important;
+    padding: 12px 14px !important;
+  }
+}
+
+/* Tablet: icon-only nav labels */
+@media (max-width: 1023px) and (min-width: 768px) {
+  .campus-nav-link-label { display: none; }
+}
+
+/* Prevent body-scroll lock on mobile when modal opens (some components do this) */
+body.campus-modal-open { overflow: hidden; }

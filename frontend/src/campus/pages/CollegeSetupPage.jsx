@@ -6,6 +6,7 @@ import {
   GraduationCap, Sparkles, ArrowRight, Plus,
 } from 'lucide-react'
 import { createCollege } from '../api'
+import { useToast } from '../components/Toast'
 
 const DEFAULT_BRANCHES = ['CSE', 'ECE', 'EE', 'ME', 'Civil', 'Chem', 'IT', 'MBA']
 const RECOMMENDED = new Set(DEFAULT_BRANCHES)
@@ -18,6 +19,7 @@ export default function CollegeSetupPage() {
   const [newBranch, setNewBranch] = useState('')
   const [logoUrl, setLogoUrl] = useState('')
   const [err, setErr] = useState('')
+  const toast = useToast()
   const [busy, setBusy] = useState(false)
 
   const autoSlug = (n) => n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -36,9 +38,9 @@ export default function CollegeSetupPage() {
       })
       localStorage.setItem('campus_college_id', data.id)
       localStorage.setItem('campus_college_slug', data.slug)
-      nav('/campus/pc')
+      toast.success(`College '${name.trim()}' created`); nav('/campus/pc')
     } catch (e) {
-      setErr(e.response?.data?.detail || e.message || 'Failed to create college')
+      const msg = e.response?.data?.detail || e.message || 'Failed to create college'; setErr(msg); toast.error(msg)
     } finally {
       setBusy(false)
     }

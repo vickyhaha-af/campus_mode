@@ -9,6 +9,7 @@ import {
 import { ChevronDown, ChevronUp, Scale } from 'lucide-react'
 import { getDrive, createRecruiterToken, getBiasAudit } from '../api'
 import CampusNav from '../components/CampusNav'
+import { useToast } from '../components/Toast'
 import DriveShortlist from '../components/DriveShortlist'
 
 function TierBadge({ tier }) {
@@ -471,11 +472,12 @@ function BiasDimensionBlock({ name, payload }) {
 }
 
 function DriveActions({ driveId }) {
+  const toast = useToast()
   const [showShare, setShowShare] = useState(false)
 
   const downloadCsv = () => {
     const base = (import.meta.env.VITE_API_URL || '/api') + '/campus'
-    const url = `${base}/drives/${driveId}/shortlist.csv`
+    const url = `${base}/drives/${driveId}/shortlist.csv`; toast.info('Downloading shortlist CSV…')
     window.location.href = url
   }
 
@@ -533,7 +535,7 @@ function ShareRecruiterModal({ driveId, onClose }) {
   const copyLink = async () => {
     if (!result?.url) return
     try {
-      await navigator.clipboard.writeText(result.url)
+      await navigator.clipboard.writeText(result.url); toast.success('Recruiter link copied to clipboard')
       setCopied(true)
       setTimeout(() => setCopied(false), 1600)
     } catch {

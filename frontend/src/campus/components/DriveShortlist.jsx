@@ -4,6 +4,7 @@ import { ChevronRight, UserPlus, Trash2, ArrowRight } from 'lucide-react'
 import {
   listShortlists, listStudents, bulkShortlist, changeShortlistStage, removeShortlist,
 } from '../api'
+import { useToast } from './Toast'
 
 
 const STAGE_ORDER = [
@@ -23,6 +24,7 @@ export default function DriveShortlist({ drive }) {
   const [err, setErr] = useState('')
   const [adding, setAdding] = useState(false)
   const [busyId, setBusyId] = useState(null)
+  const toast = useToast()
   const collegeId = drive?.college_id
 
   const refresh = async () => {
@@ -65,6 +67,7 @@ export default function DriveShortlist({ drive }) {
     try {
       await bulkShortlist(drive.id, [studentId])
       setStudents((cur) => cur.filter((s) => s.id !== studentId))
+      toast.success('Student added to shortlist')
       refresh()
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -77,6 +80,7 @@ export default function DriveShortlist({ drive }) {
     setBusyId(slId)
     try {
       await changeShortlistStage(slId, nextStage)
+      toast.success(`Moved to ${nextStage.replace('_', ' ')}`)
       refresh()
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -90,6 +94,7 @@ export default function DriveShortlist({ drive }) {
     setBusyId(slId)
     try {
       await removeShortlist(slId)
+      toast.info('Removed from shortlist')
       refresh()
     } catch (e) {
       setErr(e.response?.data?.detail || e.message)
@@ -124,7 +129,7 @@ export default function DriveShortlist({ drive }) {
 
       {/* Kanban lanes */}
       {hasAny && (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${STAGE_ORDER.length}, minmax(170px, 1fr))`, gap: 10, overflowX: 'auto', paddingBottom: 8 }}>
+        <div className="campus-kanban-lanes" style={{ display: 'grid', gridTemplateColumns: `repeat(${STAGE_ORDER.length}, minmax(170px, 1fr))`, gap: 10, overflowX: 'auto', paddingBottom: 8 }}>
           {STAGE_ORDER.map((stage, idx) => (
             <div key={stage} style={lane}>
               <div style={laneHeader}>

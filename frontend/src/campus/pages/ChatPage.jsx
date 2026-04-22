@@ -1,16 +1,19 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Send, Sparkles, Loader, AlertTriangle, MessageSquareText, Info,
   Briefcase, Filter, Compass, Copy, BookmarkPlus, CheckCircle2, Command,
+  PanelLeftOpen, X as CloseIcon,
 } from 'lucide-react'
 import {
-  createChatSession, streamChat, listDrives, bulkShortlist,
+  createChatSession, streamChat, listDrives, bulkShortlist, getChatSession,
 } from '../api'
 import CampusNav from '../components/CampusNav'
 import CandidateCard from '../components/chat/CandidateCard'
 import ToolCallBadge from '../components/chat/ToolCallBadge'
+import ActionCard, { PROPOSE_TOOLS } from '../components/chat/ActionCard'
+import HistorySidebar from '../components/chat/HistorySidebar'
 import MarkdownMessage, {
   parseCandidatesFromMarkdown, looksLikeRankingResponse,
 } from '../components/chat/MarkdownMessage'
@@ -69,6 +72,9 @@ export default function ChatPage() {
   const [pinnedDriveId, setPinnedDriveId] = useState(null)
   const [err, setErr] = useState('')
   const [fallbackActive, setFallbackActive] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [historyKey, setHistoryKey] = useState(0)
+  const [toast, setToast] = useState(null) // { message, tone, ts }
   const abortRef = useRef(null)
   const scrollRef = useRef(null)
   const inputRef = useRef(null)
@@ -88,6 +94,57 @@ export default function ChatPage() {
         setErr(e.response?.data?.detail || e.message || 'Failed to start chat')
       }
     })()
+  }, [collegeId])
+
+  // ---- toast auto-dismiss ----
+  useEffect(() => {
+    if (!toast) return
+    const id = setTimeout(() => setToast(null), 3400)
+    return () => clearTimeout(id)
+  }, [toast])
+
+  const showToast = useCallback((message, tone = 'default') => {
+    setToast({ message, tone, ts: Date.now() })
+  }, [])
+
+  // ---- session switching ----
+  const switchSession = useCallback(async (newSessionId) => {
+    if (!newSessionId || newSessionId === sessionId) return
+    if (abortRef.current) {
+      try { abortRef.current.abort() } catch { /* ignore */ }
+    }
+    setErr('')
+    setBusy(false)
+    setFallbackActive(false)
+    try {
+      const res = await getChatSession(newSessionId)
+      const rawMessages = res.data?.messages || []
+      // Rehydrate stored server messages into our UI shape.
+      setMessages(rehydrateMessages(rawMessages))
+      setSessionId(newSessionId)
+      // Restore pinned drive context if the session had one
+      if (res.data?.context_drive_id) setPinnedDriveId(res.data.context_drive_id)
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message || 'Failed to load session')
+    }
+  }, [sessionId])
+
+  const newChat = useCallback(async () => {
+    if (!collegeId) return
+    if (abortRef.current) {
+      try { abortRef.current.abort() } catch { /* ignore */ }
+    }
+    try {
+      const sRes = await createChatSession(collegeId)
+      setMessages([])
+      setErr('')
+      setBusy(false)
+      setFallbackActive(false)
+      setSessionId(sRes.data.id)
+      setHistoryKey((k) => k + 1)
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message || 'Failed to start new chat')
+    }
   }, [collegeId])
 
   // ---- auto scroll ----
@@ -146,12 +203,14 @@ export default function ChatPage() {
             const idx = [...prev].reverse().findIndex(
               (m) => m.role === 'tool_call' && m.name === ev.name && m.result === undefined
             )
+            let updated
             if (idx === -1) {
-              return [...prev, { role: 'tool_call', name: ev.name, args: {}, result: ev.result }]
+              updated = [...prev, { role: 'tool_call', name: ev.name, args: {}, result: ev.result }]
+            } else {
+              const realIdx = prev.length - 1 - idx
+              updated = [...prev]
+              updated[realIdx] = { ...updated[realIdx], result: ev.result }
             }
-            const realIdx = prev.length - 1 - idx
-            const updated = [...prev]
-            updated[realIdx] = { ...updated[realIdx], result: ev.result }
 
             // Surface semantic_rank results immediately as live candidate cards
             if (ev.name === 'semantic_rank' && Array.isArray(ev.result?.ranked)) {
@@ -161,11 +220,59 @@ export default function ChatPage() {
                 source: 'semantic_rank',
               })
             }
+
+            // Render propose_* results as an ActionCard (confirmation UX).
+            if (PROPOSE_TOOLS.has(ev.name) && ev.result && !ev.result.error) {
+              updated.push({
+                role: 'action_card',
+                tool: ev.name,
+                result: ev.result,
+              })
+            }
+            return updated
+          })
+        } else if (ev.type === 'delta') {
+          // Token-level streaming — append to the in-flight assistant bubble.
+          setMessages((prev) => {
+            const pruned = prev.filter((m) => !m.transient)
+            // Reuse the streaming bubble if we already started one this turn.
+            const lastIdx = [...pruned].reverse().findIndex(
+              (m) => m.role === 'assistant' && m.streaming
+            )
+            if (lastIdx === -1) {
+              return [...pruned, {
+                role: 'assistant',
+                content: ev.content || '',
+                streaming: true,
+                fallback: fallbackActive,
+              }]
+            }
+            const realIdx = pruned.length - 1 - lastIdx
+            const updated = [...pruned]
+            updated[realIdx] = {
+              ...updated[realIdx],
+              content: (updated[realIdx].content || '') + (ev.content || ''),
+            }
             return updated
           })
         } else if (ev.type === 'assistant_message') {
           setMessages((prev) => {
             const pruned = prev.filter((m) => !m.transient)
+            // If we were streaming, promote the streaming bubble to authoritative.
+            const lastIdx = [...pruned].reverse().findIndex(
+              (m) => m.role === 'assistant' && m.streaming
+            )
+            if (lastIdx !== -1) {
+              const realIdx = pruned.length - 1 - lastIdx
+              const updated = [...pruned]
+              updated[realIdx] = {
+                ...updated[realIdx],
+                content: ev.content, // authoritative replacement
+                streaming: false,
+                fallback: ev.fallback === true || fallbackActive,
+              }
+              return updated
+            }
             return [...pruned, {
               role: 'assistant',
               content: ev.content,
@@ -178,6 +285,9 @@ export default function ChatPage() {
         } else if (ev.type === 'done') {
           setBusy(false)
           setMessages((prev) => prev.filter((m) => !m.transient))
+          // Refresh the sidebar so the new session's title / message count
+          // reflect the latest state.
+          setHistoryKey((k) => k + 1)
         }
       }
     )

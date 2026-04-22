@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Search, Users, UploadCloud, ArrowRight, Filter, X } from 'lucide-react'
+import { Search, Users, UploadCloud, ArrowRight, Filter, X, Zap, Sparkles } from 'lucide-react'
 import { listStudents } from '../api'
 import CampusNav from '../components/CampusNav'
 
@@ -226,6 +226,7 @@ function StudentRow({ s, index }) {
             CGPA {typeof s.cgpa === 'number' ? s.cgpa.toFixed(2) : s.cgpa}
           </span>
         )}
+        <EnrichmentChip status={s.profile_enriched?.enrichment_status} />
       </div>
 
       {/* Spacer */}
@@ -234,6 +235,56 @@ function StudentRow({ s, index }) {
       {/* Status pill */}
       <StatusPill status={s.placed_status} />
     </motion.div>
+  )
+}
+
+/**
+ * EnrichmentChip — per-student indicator of how much has been extracted.
+ *
+ *   "regex"          → ⚡ Quick     (resume is parsed, LLM enrichment pending)
+ *   "llm_enriched"   → ✨ Enriched  (full AI extraction done)
+ *   "failed"         → ⚡ Quick     (LLM failed, we still have regex data)
+ *   undefined/null   → no chip     (legacy students from pre-two-phase world)
+ *
+ * Tooltip explains what the chip means; hover discoverability > visible noise.
+ */
+function EnrichmentChip({ status }) {
+  if (!status) return null // legacy students: no chip (treat as enriched)
+  if (status === 'llm_enriched') {
+    return (
+      <span
+        title="Full AI-extracted profile"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          background: 'var(--moss-light)', color: 'var(--moss)',
+          padding: '2px 8px', borderRadius: 'var(--radius-pill)',
+          fontSize: 11, fontWeight: 600,
+          border: '1px solid rgba(94,122,82,0.3)',
+        }}
+      >
+        <Sparkles size={11} strokeWidth={2.2} />
+        Enriched
+      </span>
+    )
+  }
+  // regex OR failed both show as "Quick" — from the PC's POV the student
+  // has a usable profile either way, just without AI nuance.
+  return (
+    <span
+      title={status === 'failed'
+        ? 'Quick-parsed (LLM enrichment failed — retry later)'
+        : 'Quick-parsed, LLM enrichment in progress'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        background: 'var(--cream-deep)', color: 'var(--slate)',
+        padding: '2px 8px', borderRadius: 'var(--radius-pill)',
+        fontSize: 11, fontWeight: 600,
+        border: '1px solid var(--border-strong)',
+      }}
+    >
+      <Zap size={11} strokeWidth={2.2} />
+      Quick
+    </span>
   )
 }
 

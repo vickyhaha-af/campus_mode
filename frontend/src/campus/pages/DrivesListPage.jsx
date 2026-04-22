@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { listDrives, listCompanies, createCompany, createDrive } from '../api'
 import CampusNav from '../components/CampusNav'
+import { useToast } from '../components/Toast'
 
 /* ----- tier badge ----- */
 function TierBadge({ tier }) {
@@ -71,6 +72,8 @@ function InfoChip({ icon: Icon, children }) {
 
 export default function DrivesListPage() {
   const collegeId = typeof window !== 'undefined' ? localStorage.getItem('campus_college_id') : null
+  const isDemo = typeof window !== 'undefined' && localStorage.getItem('campus_demo_mode') === '1'
+  const toast = useToast()
   const [drives, setDrives] = useState([])
   const [showNew, setShowNew] = useState(false)
   const [err, setErr] = useState('')
@@ -83,20 +86,26 @@ export default function DrivesListPage() {
       const { data } = await listDrives({ college_id: collegeId })
       setDrives(data)
     } catch (e) {
-      setErr(e.response?.data?.detail || e.message || 'Failed to load drives')
+      const msg = e.response?.data?.detail || e.message || 'Failed to load drives'
+      setErr(msg)
+      toast.error(`Could not load drives: ${msg}`)
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => { refresh() /* eslint-disable-next-line */ }, [])
+  useEffect(() => {
+    if (isDemo) toast.info('Demo mode is read-only — drive creation is disabled.')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (!collegeId) return <RequireCollege />
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--cream)' }}>
       <CampusNav />
-      <div style={{ maxWidth: 1080, margin: '0 auto', padding: '40px 24px 80px' }}>
+      <div className="campus-page-root" style={{ maxWidth: 1080, margin: '0 auto', padding: '40px 24px 80px' }}>
         <motion.div
           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
@@ -133,7 +142,7 @@ export default function DrivesListPage() {
         ) : drives.length === 0 ? (
           <EmptyBlock onNew={() => setShowNew(true)} />
         ) : (
-          <div style={{ display: 'grid', gap: 12 }}>
+          <div className="campus-drive-list" style={{ display: 'grid', gap: 12 }}>
             {drives.map((d, i) => <DriveCard key={d.id} drive={d} index={i} />)}
           </div>
         )}
@@ -143,7 +152,11 @@ export default function DrivesListPage() {
             <NewDriveModal
               collegeId={collegeId}
               onClose={() => setShowNew(false)}
-              onCreated={refresh}
+              onCreated={(createdRole) => {
+                refresh()
+                toast.success(createdRole ? `Drive "${createdRole}" created` : 'Drive created')
+              }}
+              onError={(msg) => toast.error(`Drive creation failed: ${msg}`)}
             />
           )}
         </AnimatePresence>
@@ -248,7 +261,7 @@ function DriveCard({ drive, index }) {
 }
 
 /* ----- new drive modal ----- */
-function NewDriveModal({ collegeId, onClose, onCreated }) {
+function NewDriveModal({ collegeId, onClose, onCreated, onError }) {
   const [companyName, setCompanyName] = useState('')
   const [role, setRole] = useState('')
   const [jdText, setJdText] = useState('')
@@ -279,10 +292,12 @@ function NewDriveModal({ collegeId, onClose, onCreated }) {
           max_active_backlogs: maxBacklogs ? parseInt(maxBacklogs) : null,
         },
       })
-      onCreated()
+      onCreated?.(role.trim())
       onClose()
     } catch (e) {
-      setErr(e.response?.data?.detail || e.message || 'Failed')
+      const msg = e.response?.data?.detail || e.message || 'Failed'
+      setErr(msg)
+      onError?.(msg)
     } finally {
       setBusy(false)
     }

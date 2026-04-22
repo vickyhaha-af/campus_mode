@@ -1,4 +1,4 @@
-import React, { useState, createContext, useContext } from 'react'
+import React, { useState, useEffect, createContext, useContext } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import UploadPage from './pages/UploadPage'
@@ -23,6 +23,11 @@ import DriveDetailPage from './campus/pages/DriveDetailPage'
 import CampusChatPage from './campus/pages/ChatPage'
 import StudentDashboard from './campus/pages/StudentDashboard'
 import RecruiterView from './campus/pages/RecruiterView'
+import AuditLogPage from './campus/pages/AuditLogPage'
+import CampusLogin from './campus/pages/CampusLogin'
+import RequireAuth from './campus/components/RequireAuth'
+import { CampusToastProvider } from './campus/components/Toast'
+import { applyStoredTheme } from './campus/components/DarkModeToggle'
 
 // Global session context
 const SessionContext = createContext(null)
@@ -35,6 +40,9 @@ function AppContent() {
   const [sessionData, setSessionData] = useState(null)
   const [currentStep, setCurrentStep] = useState(0) // 0 = landing, 1-4 = steps
   const navigate = useNavigate()
+
+  // Apply stored campus theme (dark/light) once on mount.
+  useEffect(() => { applyStoredTheme() }, [])
 
   const startScreening = () => {
     setCurrentStep(1)
@@ -94,17 +102,20 @@ function AppContent() {
           } />
           <Route path="/export" element={<ExportPage />} />
 
-          {/* ---- Campus vertical ---- */}
-          <Route path="/campus" element={<CampusLanding />} />
-          <Route path="/campus/setup" element={<CollegeSetupPage />} />
-          <Route path="/campus/pc" element={<PCDashboard />} />
-          <Route path="/campus/ingest" element={<BulkIngestPage />} />
-          <Route path="/campus/students" element={<StudentsListPage />} />
-          <Route path="/campus/drives" element={<DrivesListPage />} />
-          <Route path="/campus/drives/:driveId" element={<DriveDetailPage />} />
-          <Route path="/campus/chat" element={<CampusChatPage />} />
-          <Route path="/campus/student" element={<StudentDashboard />} />
-          <Route path="/campus/recruiter" element={<RecruiterView />} />
+          {/* ---- Campus vertical (toast provider wraps everything; auth gates writes) ---- */}
+          <Route path="/campus" element={<CampusToastProvider><CampusLanding /></CampusToastProvider>} />
+          <Route path="/campus/login" element={<CampusToastProvider><CampusLogin /></CampusToastProvider>} />
+          <Route path="/campus/student" element={<CampusToastProvider><StudentDashboard /></CampusToastProvider>} />
+          <Route path="/campus/recruiter" element={<CampusToastProvider><RecruiterView /></CampusToastProvider>} />
+          {/* PC admin routes — RequireAuth bypasses in demo mode */}
+          <Route path="/campus/setup" element={<CampusToastProvider><RequireAuth><CollegeSetupPage /></RequireAuth></CampusToastProvider>} />
+          <Route path="/campus/pc" element={<CampusToastProvider><RequireAuth><PCDashboard /></RequireAuth></CampusToastProvider>} />
+          <Route path="/campus/ingest" element={<CampusToastProvider><RequireAuth><BulkIngestPage /></RequireAuth></CampusToastProvider>} />
+          <Route path="/campus/students" element={<CampusToastProvider><RequireAuth><StudentsListPage /></RequireAuth></CampusToastProvider>} />
+          <Route path="/campus/drives" element={<CampusToastProvider><RequireAuth><DrivesListPage /></RequireAuth></CampusToastProvider>} />
+          <Route path="/campus/drives/:driveId" element={<CampusToastProvider><RequireAuth><DriveDetailPage /></RequireAuth></CampusToastProvider>} />
+          <Route path="/campus/chat" element={<CampusToastProvider><RequireAuth><CampusChatPage /></RequireAuth></CampusToastProvider>} />
+          <Route path="/campus/audit" element={<CampusToastProvider><RequireAuth><AuditLogPage /></RequireAuth></CampusToastProvider>} />
         </Routes>
       </SpatialContent>
     </SessionContext.Provider>

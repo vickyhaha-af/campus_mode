@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   UploadCloud, FileText, X, CheckCircle, AlertTriangle, Play, Info,
-  Sparkles, FileCheck,
+  Sparkles, FileCheck, Zap, Users,
 } from 'lucide-react'
 import { startIngest, pollIngest } from '../api'
 import CampusNav from '../components/CampusNav'
@@ -33,12 +33,17 @@ export default function BulkIngestPage() {
     if (!files.length) { setErr('Pick resume files first'); return }
     try {
       const { data } = await startIngest(collegeId, files)
-      setJob({ id: data.job_id, total: data.total, processed: 0, succeeded: 0, failed: 0, status: 'queued', errors: [] })
+      setJob({
+        id: data.job_id, total: data.total,
+        processed: 0, succeeded: 0, failed: 0,
+        regex_completed: 0, llm_enriched: 0,
+        phase: 'regex', status: 'queued', errors: [],
+      })
       pollRef.current = setInterval(async () => {
         try {
           const { data: j } = await pollIngest(data.job_id)
           setJob(j)
-          if (j.status === 'completed' || j.status === 'failed') clearInterval(pollRef.current)
+          if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') clearInterval(pollRef.current)
         } catch (e) { /* keep polling */ }
       }, POLL_MS)
     } catch (e) {
@@ -46,7 +51,15 @@ export default function BulkIngestPage() {
     }
   }
 
-  const pct = job ? Math.round((job.processed / Math.max(job.total, 1)) * 100) : 0
+  // Dual-phase progress: Phase A = quick-parse (regex), Phase B = LLM enrichment.
+  // We read the backend-derived `regex_completed` / `llm_enriched` when present,
+  // and fall back to the legacy `processed` / `succeeded` columns so an older
+  // backend still renders sensibly.
+  const regexDone = job ? (job.regex_completed ?? job.processed ?? 0) : 0
+  const llmDone = job ? (job.llm_enriched ?? job.succeeded ?? 0) : 0
+  const total = job ? Math.max(job.total, 1) : 1
+  const pctA = Math.round((regexDone / total) * 100)
+  const pctB = Math.round((llmDone / total) * 100)
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--cream)' }}>
@@ -233,65 +246,131 @@ export default function BulkIngestPage() {
             </motion.button>
           </>
         ) : (
-          <IngestProgress job={job} pct={pct} onNew={() => {
-            setJob(null); setFiles([])
-            if (pollRef.current) clearInterval(pollRef.current)
-          }} />
+          <IngestProgress
+            job={job}
+            regexDone={regexDone}
+            llmDone={llmDone}
+            total={total}
+            pctA={pctA}
+            pctB={pctB}
+            onNew={() => {
+              setJob(null); setFiles([])
+              if (pollRef.current) clearInterval(pollRef.current)
+            }}
+          />
         )}
       </div>
     </div>
   )
 }
 
-/* ----- Ring progress ----- */
-function RingProgress({ pct, done, failed }) {
-  const r = 46
-  const c = 2 * Math.PI * r
-  const offset = c - (c * pct) / 100
+/* ----- Dual phase progress ----- */
+//
+// Phase A (Quick parse / regex) completes in ~10-15s for 150 resumes so its
+// bar animates almost immediately. Phase B (AI enrichment / Groq) fills over
+// ~30-40 min because we're rate-limited to 30 RPM on the free tier.
+//
+// We show TWO stacked bars rather than one ring because the two phases have
+// fundamentally different latency characteristics — combining them into one
+// percentage would hide the fact that students are ALREADY VISIBLE after the
+// first bar lights up. That's the whole point of the split.
 
+function PhaseBar({ label, sublabel, done, total, pct, accent, icon: Icon, active }) {
+  const colors = {
+    quick: {
+      track: 'var(--cream-deep)',
+      fill: 'var(--accent-cool)',
+      icon: 'var(--accent-cool)',
+      text: 'var(--accent-cool)',
+    },
+    ai: {
+      track: 'var(--cream-deep)',
+      fill: 'var(--sage)',
+      icon: 'var(--sage)',
+      text: 'var(--sage-dim)',
+    },
+  }[accent]
   return (
-    <svg width="120" height="120" viewBox="0 0 120 120" style={{ flexShrink: 0 }}>
-      <circle cx="60" cy="60" r={r} fill="none" stroke="var(--cream-deep)" strokeWidth="8" />
-      <motion.circle
-        cx="60" cy="60" r={r} fill="none"
-        stroke={done && failed ? 'var(--blush)' : done ? 'var(--moss)' : 'var(--sage)'}
-        strokeWidth="8"
-        strokeLinecap="round"
-        strokeDasharray={c}
-        animate={{ strokeDashoffset: offset }}
-        transition={{ duration: 0.5, ease: 'easeOut' }}
-        style={{ transform: 'rotate(-90deg)', transformOrigin: '60px 60px' }}
-      />
-      <text
-        x="60" y="60"
-        textAnchor="middle" dominantBaseline="central"
-        style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 26, fontWeight: 700,
-          fill: 'var(--ink)',
-        }}
-      >
-        {pct}%
-      </text>
-      <text
-        x="60" y="82"
-        textAnchor="middle"
-        style={{
-          fontFamily: 'var(--font-sans)',
-          fontSize: 10, fontWeight: 600,
-          fill: 'var(--slate-mid)',
-          letterSpacing: 0.5, textTransform: 'uppercase',
-        }}
-      >
-        Processed
-      </text>
-    </svg>
+    <div style={{
+      padding: 16,
+      background: active ? 'var(--white)' : 'transparent',
+      borderRadius: 12,
+      border: active ? '1px solid var(--border)' : '1px solid transparent',
+      transition: 'background 200ms, border-color 200ms',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginBottom: 8,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{
+            width: 26, height: 26, borderRadius: 7,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: active ? colors.fill : 'var(--cream-deep)',
+            transition: 'background 200ms',
+          }}>
+            <Icon size={14} color={active ? '#fff' : colors.icon} strokeWidth={2.2} />
+          </div>
+          <div>
+            <div style={{
+              fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700,
+              color: 'var(--ink)', letterSpacing: '-0.01em',
+            }}>
+              {label}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--slate-mid)' }}>
+              {sublabel}
+            </div>
+          </div>
+        </div>
+        <div style={{
+          fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600,
+          color: colors.text,
+        }}>
+          {done}/{total}
+          <span style={{ color: 'var(--slate-mid)', marginLeft: 6, fontWeight: 500 }}>
+            {pct}%
+          </span>
+        </div>
+      </div>
+      <div style={{
+        width: '100%', height: 8, borderRadius: 999,
+        background: colors.track, overflow: 'hidden',
+      }}>
+        <motion.div
+          initial={false}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+          style={{
+            height: '100%', borderRadius: 999,
+            background: colors.fill,
+          }}
+        />
+      </div>
+    </div>
   )
 }
 
-function IngestProgress({ job, pct, onNew }) {
-  const done = job.status === 'completed' || job.status === 'failed'
+function IngestProgress({ job, regexDone, llmDone, total, pctA, pctB, onNew }) {
+  const done = job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
   const hasFailures = (job.failed || 0) > 0
+  const phase = job.phase || (regexDone < total ? 'regex' : llmDone < regexDone ? 'llm' : 'done')
+
+  let heading
+  let sub
+  if (done) {
+    heading = hasFailures ? 'Done with some errors' : 'Ingest complete'
+    sub = `${llmDone} of ${total} resumes fully enriched`
+  } else if (phase === 'regex') {
+    heading = 'Quick-parsing resumes…'
+    sub = 'Students will appear in your roster as soon as this bar fills.'
+  } else if (phase === 'llm') {
+    heading = 'AI enrichment in progress…'
+    sub = 'Students are already visible. AI nuance (passions, personality, role-fit) is being added in the background.'
+  } else {
+    heading = 'Ingesting…'
+    sub = 'Setting up the pipeline.'
+  }
 
   return (
     <motion.div
@@ -304,24 +383,43 @@ function IngestProgress({ job, pct, onNew }) {
         boxShadow: 'var(--shadow-md)',
       }}
     >
-      <div style={{ display: 'flex', gap: 24, alignItems: 'center', marginBottom: 24 }}>
-        <RingProgress pct={pct} done={done} failed={hasFailures} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="text-eyebrow" style={{ marginBottom: 6 }}>
-            {done ? 'Complete' : `Status · ${job.status}`}
-          </div>
-          <h3 style={{
-            fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700,
-            color: 'var(--ink)', marginBottom: 6, letterSpacing: '-0.015em',
-          }}>
-            {done
-              ? hasFailures ? 'Done with some errors' : 'Ingest complete'
-              : 'Parsing resumes…'}
-          </h3>
-          <div style={{ fontSize: 14, color: 'var(--slate)' }}>
-            <strong style={{ color: 'var(--ink)' }}>{job.processed}</strong> of <strong style={{ color: 'var(--ink)' }}>{job.total}</strong> resumes handled
-          </div>
+      <div style={{ marginBottom: 20 }}>
+        <div className="text-eyebrow" style={{ marginBottom: 6 }}>
+          {done ? 'Complete' : `Status · ${job.status}${phase && !done ? ` (phase ${phase === 'regex' ? 'A' : 'B'})` : ''}`}
         </div>
+        <h3 style={{
+          fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700,
+          color: 'var(--ink)', marginBottom: 6, letterSpacing: '-0.015em',
+        }}>
+          {heading}
+        </h3>
+        <div style={{ fontSize: 14, color: 'var(--slate)', lineHeight: 1.5 }}>
+          {sub}
+        </div>
+      </div>
+
+      {/* Dual progress bars */}
+      <div style={{ display: 'grid', gap: 8, marginBottom: 20 }}>
+        <PhaseBar
+          label="Quick parse"
+          sublabel="Regex extract — students become visible here"
+          done={regexDone}
+          total={total}
+          pct={pctA}
+          accent="quick"
+          icon={Zap}
+          active={phase === 'regex' || regexDone > 0}
+        />
+        <PhaseBar
+          label="AI enrichment"
+          sublabel="Groq LLM adds passions, personality, role-fit (~30 RPM)"
+          done={llmDone}
+          total={total}
+          pct={pctB}
+          accent="ai"
+          icon={Sparkles}
+          active={phase === 'llm'}
+        />
       </div>
 
       {/* Stats grid */}
@@ -330,9 +428,10 @@ function IngestProgress({ job, pct, onNew }) {
         gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
         gap: 10, marginBottom: 20,
       }}>
-        <Stat label="Succeeded" value={job.succeeded || 0} accent="sage" icon={CheckCircle} />
-        <Stat label="Failed"    value={job.failed || 0}    accent="blush" icon={AlertTriangle} />
-        <Stat label="Total"     value={job.total || 0}     accent="cool"  icon={FileText} />
+        <Stat label="Quick-parsed" value={regexDone} accent="cool"  icon={Zap} />
+        <Stat label="AI-enriched"  value={llmDone}   accent="sage"  icon={Sparkles} />
+        <Stat label="Failed"       value={job.failed || 0} accent="blush" icon={AlertTriangle} />
+        <Stat label="Total"        value={total}     accent="warm"  icon={FileText} />
       </div>
 
       {job.errors && job.errors.length > 0 && (
@@ -363,7 +462,7 @@ function IngestProgress({ job, pct, onNew }) {
         </div>
       )}
 
-      {done && (
+      {done ? (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button onClick={onNew} className="btn-primary btn-lg">
             <UploadCloud size={16} /> Start new ingest
@@ -372,7 +471,14 @@ function IngestProgress({ job, pct, onNew }) {
             See students →
           </Link>
         </div>
-      )}
+      ) : regexDone > 0 ? (
+        // Phase A students are live — let the user go look at them while
+        // Phase B runs in the background. This is the whole reason the
+        // pipeline is split.
+        <Link to="/campus/students" className="btn-secondary btn-lg">
+          <Users size={16} /> View students already parsed →
+        </Link>
+      ) : null}
     </motion.div>
   )
 }

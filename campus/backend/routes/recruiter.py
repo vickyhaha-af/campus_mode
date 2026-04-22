@@ -24,6 +24,7 @@ from ..db import (
 from ..services.demo_store import (
     demo_drive_by_id, demo_student_by_id, DEMO_COMPANIES,
 )
+from ..services.campus_audit import safe_log
 
 
 router = APIRouter(prefix="/api/campus/recruiter", tags=["campus:recruiter"])
@@ -136,6 +137,19 @@ async def create_recruiter_token(payload: TokenCreate):
     demo = demo_drive_by_id(drive_id)
     if demo:
         # Don't persist for demo; token is self-contained + signed.
+        college_id = demo.get("college_id")
+        if college_id:
+            safe_log(
+                college_id=college_id,
+                action="recruiter_token_create",
+                target_type="drive",
+                target_id=drive_id,
+                details={
+                    "recruiter_email": email,
+                    "expires_at": expires_iso,
+                    "demo": True,
+                },
+            )
         return {
             "token": token,
             "expires_at": expires_iso,
@@ -155,6 +169,26 @@ async def create_recruiter_token(payload: TokenCreate):
     except Exception as e:
         # If the drive doesn't exist in DB we surface 404-ish
         raise HTTPException(status_code=500, detail=f"Could not create token: {e}")
+
+    # Look up college_id so the event lands in the right chain.
+    drive_row = None
+    try:
+        drive_row = select_one(T_DRIVES, {"id": drive_id})
+    except Exception:
+        pass
+    college_id = (drive_row or {}).get("college_id")
+    if college_id:
+        safe_log(
+            college_id=college_id,
+            action="recruiter_token_create",
+            target_type="drive",
+            target_id=drive_id,
+            details={
+                "recruiter_email": email,
+                "expires_at": expires_iso,
+                "token_row_id": row.get("id") if isinstance(row, dict) else None,
+            },
+        )
 
     return {
         "token": token,

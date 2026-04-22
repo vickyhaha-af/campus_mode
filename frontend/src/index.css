@@ -930,3 +930,122 @@ input[type="range"]::-moz-range-thumb {
     width: 220px !important;
   }
 }
+
+/* ============================================================
+   CAMPUS — Responsive + Dark-mode polish
+   ============================================================ */
+
+/* Dark-mode aware navbar blur background (CampusNav reads --nav-bg). */
+html.dark { --nav-bg: rgba(31,35,48,0.78); }
+html:not(.dark) { --nav-bg: rgba(255,255,255,0.78); }
+
+/* Dark-mode: soften the pastel light backgrounds used on pages. */
+html.dark .status-badge.pass,
+html.dark .chip,
+html.dark .chip.gap,
+html.dark .chip.warm,
+html.dark .chip.cool,
+html.dark .chip.neutral,
+html.dark .filter-pill {
+  backdrop-filter: none;
+}
+
+/* Campus-responsive utility breakpoints. Pages opt-in with `campus-*` classes. */
+
+/* Mobile: < 768px */
+@media (max-width: 767px) {
+  /* PCDashboard */
+  .campus-stat-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .campus-actions-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  /* DrivesListPage */
+  .campus-drive-list {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* StudentsListPage - filter bar + table */
+  .campus-filter-bar {
+    display: none !important;
+  }
+  .campus-filter-bar.open {
+    display: block !important;
+  }
+  .campus-filter-toggle {
+    display: inline-flex !important;
+  }
+  .campus-student-row {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+    align-items: flex-start !important;
+  }
+  .campus-student-row > * {
+    width: 100%;
+  }
+
+  /* DriveDetailPage */
+  .campus-hero-chips {
+    width: 100%;
+  }
+  .campus-hero-chips > * {
+    flex: 1 1 calc(50% - 10px);
+    min-width: 0 !important;
+  }
+  .campus-kanban-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -16px;
+    padding: 0 16px 8px;
+  }
+  .campus-kanban-wrap > * {
+    min-width: max-content;
+  }
+
+  /* BulkIngestPage */
+  .campus-ingest-root {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  /* ChatPage */
+  .campus-chat-pin-desktop {
+    display: none !important;
+  }
+  .campus-chat-pin-mobile {
+    display: inline-flex !important;
+  }
+
+  /* Generic: tight padding for page roots */
+  .campus-page-root {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}
+
+/* Tablet: 768–1023px */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .campus-page-root {
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+  .campus-student-row {
+    grid-template-columns: minmax(140px, 1.2fr) auto 1fr auto !important;
+  }
+}
+
+/* Hide the mobile-only filter toggle on desktop by default. */
+.campus-filter-toggle {
+  display: none;
+}
+.campus-chat-pin-mobile {
+  display: none;
+}
+
+/* Skeleton with a tiny variant used in mobile cards. */
+.skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+}

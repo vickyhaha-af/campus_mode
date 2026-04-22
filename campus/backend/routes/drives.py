@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from ..db import T_DRIVES, T_SHORTLISTS, T_STUDENTS, insert, select_one, select_many, update, delete
 from ..models.drive import Drive, DriveCreate, DriveUpdate, EligibilityRules
 from ..services.demo_store import is_demo, demo_drive_by_id, demo_student_by_id, DEMO_DRIVES
+from ..services.campus_audit import safe_log
 
 
 router = APIRouter(prefix="/api/campus/drives", tags=["campus:drives"])
@@ -46,12 +47,48 @@ def _serialize(payload_dict: dict) -> dict:
     return out
 
 
+def _audit_gender_restriction(
+    college_id: str, drive_id: Optional[str], rules: Optional[EligibilityRules], verb: str,
+) -> None:
+    """If a gender_restriction was set, log it as a distinct compliance event
+    with the PC-supplied justification captured in `details`."""
+    if rules is None:
+        return
+    gr = getattr(rules, "gender_restriction", None)
+    if not gr:
+        return
+    safe_log(
+        college_id=college_id,
+        action="drive_gender_restriction",
+        target_type="drive",
+        target_id=drive_id,
+        details={
+            "verb": verb,  # "create" | "update"
+            "gender_restriction": gr,
+            "justification": getattr(rules, "gender_restriction_justification", None),
+        },
+    )
+
+
 @router.post("")
 async def create_drive(payload: DriveCreate):
     if is_demo(payload.college_id):
         raise HTTPException(status_code=403, detail="Demo college is read-only.")
     _validate_eligibility(payload.eligibility_rules)
-    return insert(T_DRIVES, _serialize(payload.model_dump(exclude_none=True)))
+    row = insert(T_DRIVES, _serialize(payload.model_dump(exclude_none=True)))
+    safe_log(
+        college_id=payload.college_id,
+        action="drive_create",
+        target_type="drive",
+        target_id=row.get("id"),
+        details={
+            "role": payload.role,
+            "company_id": payload.company_id,
+            "status": row.get("status"),
+        },
+    )
+    _audit_gender_restriction(payload.college_id, row.get("id"), payload.eligibility_rules, "create")
+    return row
 
 
 @router.get("")
@@ -89,14 +126,36 @@ async def update_drive(drive_id: str, payload: DriveUpdate):
     if demo_drive_by_id(drive_id):
         raise HTTPException(status_code=403, detail="Demo drives are read-only.")
     _validate_eligibility(payload.eligibility_rules)
-    return update(T_DRIVES, drive_id, _serialize(payload.model_dump(exclude_none=True)))
+    row = update(T_DRIVES, drive_id, _serialize(payload.model_dump(exclude_none=True)))
+    college_id = row.get("college_id")
+    if college_id:
+        safe_log(
+            college_id=college_id,
+            action="drive_update",
+            target_type="drive",
+            target_id=drive_id,
+            details={k: v for k, v in payload.model_dump(exclude_none=True).items()
+                     if k != "eligibility_rules"},
+        )
+        _audit_gender_restriction(college_id, drive_id, payload.eligibility_rules, "update")
+    return row
 
 
 @router.delete("/{drive_id}")
 async def remove_drive(drive_id: str):
     if demo_drive_by_id(drive_id):
         raise HTTPException(status_code=403, detail="Demo drives are read-only.")
+    existing = select_one(T_DRIVES, {"id": drive_id}) or {}
     delete(T_DRIVES, drive_id)
+    college_id = existing.get("college_id")
+    if college_id:
+        safe_log(
+            college_id=college_id,
+            action="drive_delete",
+            target_type="drive",
+            target_id=drive_id,
+            details={"role": existing.get("role"), "company_id": existing.get("company_id")},
+        )
     return {"status": "deleted"}
 
 

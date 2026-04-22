@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from ..db import T_SHORTLISTS, insert, select_one, select_many, update, delete
 from ..models.shortlist import Shortlist, ShortlistCreate, ShortlistUpdate, Stage
 from ..services.demo_store import is_demo, demo_drive_by_id, demo_student_by_id
+from ..services.campus_audit import safe_log
 
 
 router = APIRouter(prefix="/api/campus/shortlists", tags=["campus:shortlists"])
@@ -34,6 +35,19 @@ def _now() -> str:
 
 def _drive_is_demo(drive_id: str) -> bool:
     return demo_drive_by_id(drive_id) is not None
+
+
+def _college_id_for_drive(drive_id: str) -> Optional[str]:
+    """Resolve the owning college for a drive — demo first, then DB."""
+    d = demo_drive_by_id(drive_id)
+    if d:
+        return d.get("college_id")
+    try:
+        from ..db import T_DRIVES  # local import: avoids shortlist-side cycle
+        row = select_one(T_DRIVES, {"id": drive_id})
+        return (row or {}).get("college_id")
+    except Exception:
+        return None
 
 
 # ---------- CRUD ----------
@@ -67,6 +81,20 @@ async def bulk_shortlist(payload: BulkCreate):
             }
             _DEMO_SHORTLISTS[row["id"]] = row
             created.append(row)
+        # Audit: one entry per bulk_shortlist call (keeps the chain legible)
+        college_id = _college_id_for_drive(payload.drive_id)
+        if college_id:
+            safe_log(
+                college_id=college_id,
+                action="bulk_shortlist",
+                target_type="drive",
+                target_id=payload.drive_id,
+                details={
+                    "student_ids": payload.student_ids,
+                    "created": len(created),
+                    "requested": len(payload.student_ids),
+                },
+            )
         return {"created": len(created), "shortlists": created}
 
     # Real persistence
@@ -81,6 +109,19 @@ async def bulk_shortlist(payload: BulkCreate):
             "rank": i + 1,
         })
         created.append(row)
+    college_id = _college_id_for_drive(payload.drive_id)
+    if college_id:
+        safe_log(
+            college_id=college_id,
+            action="bulk_shortlist",
+            target_type="drive",
+            target_id=payload.drive_id,
+            details={
+                "student_ids": payload.student_ids,
+                "created": len(created),
+                "requested": len(payload.student_ids),
+            },
+        )
     return {"created": len(created), "shortlists": created}
 
 
@@ -138,9 +179,38 @@ async def update_shortlist(shortlist_id: str, payload: ShortlistUpdate):
 @router.delete("/{shortlist_id}")
 async def remove_shortlist(shortlist_id: str):
     if shortlist_id in _DEMO_SHORTLISTS:
-        _DEMO_SHORTLISTS.pop(shortlist_id)
+        removed = _DEMO_SHORTLISTS.pop(shortlist_id)
+        drive_id = removed.get("drive_id")
+        college_id = _college_id_for_drive(drive_id) if drive_id else None
+        if college_id:
+            safe_log(
+                college_id=college_id,
+                action="shortlist_remove",
+                target_type="shortlist",
+                target_id=shortlist_id,
+                details={
+                    "drive_id": drive_id,
+                    "student_id": removed.get("student_id"),
+                    "stage": removed.get("stage"),
+                },
+            )
         return {"status": "deleted"}
+    existing = select_one(T_SHORTLISTS, {"id": shortlist_id}) or {}
     delete(T_SHORTLISTS, shortlist_id)
+    drive_id = existing.get("drive_id")
+    college_id = _college_id_for_drive(drive_id) if drive_id else None
+    if college_id:
+        safe_log(
+            college_id=college_id,
+            action="shortlist_remove",
+            target_type="shortlist",
+            target_id=shortlist_id,
+            details={
+                "drive_id": drive_id,
+                "student_id": existing.get("student_id"),
+                "stage": existing.get("stage"),
+            },
+        )
     return {"status": "deleted"}
 
 
@@ -161,7 +231,40 @@ async def change_stage(shortlist_id: str, payload: StageChange):
     if payload.stage not in VALID_STAGES:
         raise HTTPException(status_code=422, detail=f"Invalid stage. Must be one of {VALID_STAGES}")
     if shortlist_id in _DEMO_SHORTLISTS:
+        prev_stage = _DEMO_SHORTLISTS[shortlist_id].get("stage")
+        drive_id = _DEMO_SHORTLISTS[shortlist_id].get("drive_id")
         _DEMO_SHORTLISTS[shortlist_id]["stage"] = payload.stage
         _DEMO_SHORTLISTS[shortlist_id]["last_updated"] = _now()
+        college_id = _college_id_for_drive(drive_id) if drive_id else None
+        if college_id:
+            safe_log(
+                college_id=college_id,
+                action="shortlist_stage_change",
+                target_type="shortlist",
+                target_id=shortlist_id,
+                details={
+                    "from": prev_stage,
+                    "to": payload.stage,
+                    "drive_id": drive_id,
+                    "student_id": _DEMO_SHORTLISTS[shortlist_id].get("student_id"),
+                },
+            )
         return _DEMO_SHORTLISTS[shortlist_id]
-    return update(T_SHORTLISTS, shortlist_id, {"stage": payload.stage})
+    existing = select_one(T_SHORTLISTS, {"id": shortlist_id}) or {}
+    row = update(T_SHORTLISTS, shortlist_id, {"stage": payload.stage})
+    drive_id = row.get("drive_id") or existing.get("drive_id")
+    college_id = _college_id_for_drive(drive_id) if drive_id else None
+    if college_id:
+        safe_log(
+            college_id=college_id,
+            action="shortlist_stage_change",
+            target_type="shortlist",
+            target_id=shortlist_id,
+            details={
+                "from": existing.get("stage"),
+                "to": payload.stage,
+                "drive_id": drive_id,
+                "student_id": row.get("student_id"),
+            },
+        )
+    return row

@@ -94,6 +94,25 @@ export const createChatSession = (college_id, context_drive_id = null) =>
 export const getChatSession = (session_id) =>
   campus.get(`/chat/session/${session_id}`)
 
+export const listChatSessions = (college_id, limit = 50) =>
+  campus.get(`/chat/sessions?college_id=${encodeURIComponent(college_id)}&limit=${limit}`)
+
+// ---------- communications ----------
+/**
+ * Send a (mocked) communication. Body may contain {{meeting_link}}; if
+ * meeting_link is provided the backend substitutes it before persisting.
+ *
+ * @param {object} params
+ * @param {string} params.drive_id
+ * @param {string} params.student_id
+ * @param {'interview_invite'|'rejection'|'shortlist_notify'|'offer'|'custom'} params.type
+ * @param {string} params.subject
+ * @param {string} params.body
+ * @param {string?} params.meeting_link
+ */
+export const sendCommunication = (params) =>
+  campus.post('/communications/send', params)
+
 /**
  * Stream chat events via fetch + ReadableStream.
  * Calls onEvent({type, ...}) for each SSE event; onEvent gets "done" at the end.
@@ -142,3 +161,31 @@ export function streamChat({ session_id, message, college_id, drive_context_id }
 }
 
 export default campus
+
+// ---------- analytics (Agent N) ----------
+export const getFunnel = (college_id) =>
+  campus.get(`/analytics/funnel?college_id=${encodeURIComponent(college_id)}`)
+export const getBranchBreakdown = (college_id) =>
+  campus.get(`/analytics/branch-breakdown?college_id=${encodeURIComponent(college_id)}`)
+export const getDrivesPerformance = (college_id) =>
+  campus.get(`/analytics/drives-performance?college_id=${encodeURIComponent(college_id)}`)
+export const getNeedsAttention = (college_id) =>
+  campus.get(`/analytics/needs-attention?college_id=${encodeURIComponent(college_id)}`)
+export const getBiasAudit = (drive_id) =>
+  campus.get(`/drives/${drive_id}/bias-audit`)
+
+// ---------- audit log (Agent P) ----------
+export const listAuditLog = (filters = {}) => {
+  const q = new URLSearchParams()
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v !== undefined && v !== '' && v !== null) q.append(k, v)
+  })
+  return campus.get(`/audit?${q.toString()}`)
+}
+export const verifyAuditChain = (college_id) =>
+  campus.get(`/audit/verify?college_id=${encodeURIComponent(college_id)}`)
+export const listAuditActions = (college_id) =>
+  campus.get(`/audit/actions?college_id=${encodeURIComponent(college_id)}`)
+
+// ---------- coach (Agent R) ----------
+export const getCoach = (student_id) => campus.get(`/coach/${student_id}`)

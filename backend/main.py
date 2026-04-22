@@ -92,6 +92,10 @@ try:
     from campus.backend.routes.demo import router as campus_demo_router
     from campus.backend.routes.shortlists import router as campus_shortlists_router
     from campus.backend.routes.recruiter import router as campus_recruiter_router
+    from campus.backend.routes.analytics import router as campus_analytics_router
+    from campus.backend.routes.audit import router as campus_audit_router
+    from campus.backend.routes.communications import router as campus_communications_router
+    from campus.backend.routes.coach import router as campus_coach_router
 
     app.include_router(campus_colleges_router)
     app.include_router(campus_students_router)
@@ -102,8 +106,12 @@ try:
     app.include_router(campus_demo_router)
     app.include_router(campus_shortlists_router)
     app.include_router(campus_recruiter_router)
+    app.include_router(campus_analytics_router)
+    app.include_router(campus_audit_router)
+    app.include_router(campus_communications_router)
+    app.include_router(campus_coach_router)
 
-    print("✓ Campus vertical routes registered under /api/campus/* (incl. chat + demo)")
+    print("✓ Campus vertical routes registered under /api/campus/* (analytics + audit + chat + coach + comms + demo)")
 except Exception as _campus_err:  # pragma: no cover
     print(f"⚠ Campus routes not loaded: {_campus_err}")
 

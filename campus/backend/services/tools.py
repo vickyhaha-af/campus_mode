@@ -536,8 +536,375 @@ def match_drives_for_student(student_id: str, limit: int = 5) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# TOOL: propose_shortlist  (WRITE — preview only; UI confirms the actual write)
+# ---------------------------------------------------------------------------
+
+def propose_shortlist(
+    drive_id: str,
+    student_ids: List[str],
+) -> Dict[str, Any]:
+    """
+    Preview what a bulk_shortlist call would create, WITHOUT writing anything.
+
+    Returns per-student eligibility + a compact fit signal so the PC admin can
+    scan the preview, then the frontend's confirmation UI will call the real
+    write endpoint (bulkShortlist) on approval.
+    """
+    try:
+        if not drive_id:
+            return {"error": "drive_id required"}
+        if not student_ids:
+            return {"error": "student_ids must be a non-empty list"}
+
+        drive = demo_drive_by_id(drive_id) or select_one(T_DRIVES, {"id": drive_id})
+        if not drive:
+            return {"error": "drive not found"}
+
+        preview: List[Dict[str, Any]] = []
+        eligible_count = 0
+        for sid in student_ids:
+            student = demo_student_by_id(sid) or select_one(T_STUDENTS, {"id": sid})
+            if not student:
+                preview.append({
+                    "student_id": sid,
+                    "name": None,
+                    "eligible": False,
+                    "violations": ["student not found"],
+                    "fit_score": None,
+                })
+                continue
+
+            elig = check_eligibility(sid, drive_id)
+            fit = explain_fit(sid, drive_id)
+            enriched = student.get("profile_enriched") or {}
+            top_role = None
+            role_fit = enriched.get("role_fit_signals") or {}
+            if role_fit:
+                best = max(role_fit.items(), key=lambda kv: kv[1])
+                top_role = {"role": best[0], "score": best[1]}
+
+            eligible = bool(elig.get("eligible"))
+            if eligible:
+                eligible_count += 1
+
+            preview.append({
+                "student_id": sid,
+                "name": student.get("name"),
+                "branch": student.get("branch"),
+                "year": student.get("year"),
+                "cgpa": student.get("cgpa"),
+                "eligible": eligible,
+                "violations": elig.get("violations") or [],
+                "top_role": top_role,
+                "skill_overlap_with_jd": (fit.get("signals") or {}).get("skill_overlap_with_jd") or [],
+                "summary_snippet": (enriched.get("summary") or "")[:180],
+            })
+
+        company = None
+        if drive.get("company_id"):
+            company = demo_company_by_id(drive.get("company_id")) or select_one(
+                T_COMPANIES, {"id": drive.get("company_id")}
+            )
+
+        return {
+            "action": "shortlist",
+            "drive": {
+                "id": drive["id"],
+                "role": drive.get("role"),
+                "company": (company or {}).get("name"),
+                "location": drive.get("location"),
+                "ctc_offered": drive.get("ctc_offered"),
+            },
+            "students": preview,
+            "total": len(preview),
+            "eligible_count": eligible_count,
+            "ineligible_count": len(preview) - eligible_count,
+            "requires_confirmation": True,
+        }
+    except Exception as e:
+        return {"error": f"propose_shortlist failed: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# TOOL: propose_interview_email  (WRITE draft — preview only; UI sends on confirm)
+# ---------------------------------------------------------------------------
+
+def propose_interview_email(
+    drive_id: str,
+    student_ids: List[str],
+    slot_text: str = "",
+    tone: str = "professional",
+) -> Dict[str, Any]:
+    """
+    Draft an interview-invite email per student. Uses Groq (if available) to
+    write the email; otherwise falls back to a deterministic template.
+
+    Body contains the literal placeholder `{{meeting_link}}` which the PC
+    fills in before sending. Does NOT persist anything.
+    """
+    try:
+        if not drive_id:
+            return {"error": "drive_id required"}
+        if not student_ids:
+            return {"error": "student_ids must be a non-empty list"}
+
+        drive = demo_drive_by_id(drive_id) or select_one(T_DRIVES, {"id": drive_id})
+        if not drive:
+            return {"error": "drive not found"}
+
+        company = None
+        if drive.get("company_id"):
+            company = demo_company_by_id(drive.get("company_id")) or select_one(
+                T_COMPANIES, {"id": drive.get("company_id")}
+            )
+        company_name = (company or {}).get("name") or "the recruiting team"
+        role = drive.get("role") or "the open role"
+
+        drafts: List[Dict[str, Any]] = []
+        for sid in student_ids:
+            student = demo_student_by_id(sid) or select_one(T_STUDENTS, {"id": sid})
+            if not student:
+                drafts.append({
+                    "student_id": sid,
+                    "name": None,
+                    "subject": None,
+                    "body": None,
+                    "error": "student not found",
+                })
+                continue
+
+            name = student.get("name") or "Candidate"
+            subject = f"Interview invitation — {role} @ {company_name}"
+            body = _draft_email_with_llm(
+                kind="interview",
+                tone=tone,
+                student_name=name,
+                role=role,
+                company_name=company_name,
+                slot_text=slot_text,
+                reason=None,
+            )
+
+            drafts.append({
+                "student_id": sid,
+                "name": name,
+                "subject": subject,
+                "body": body,
+                "type": "interview_invite",
+            })
+
+        return {
+            "action": "interview_email",
+            "drive": {
+                "id": drive["id"],
+                "role": role,
+                "company": company_name,
+            },
+            "slot_text": slot_text,
+            "tone": tone,
+            "drafts": drafts,
+            "total": len(drafts),
+            "requires_confirmation": True,
+        }
+    except Exception as e:
+        return {"error": f"propose_interview_email failed: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# TOOL: propose_rejection_email  (WRITE draft — preview only)
+# ---------------------------------------------------------------------------
+
+def propose_rejection_email(
+    drive_id: str,
+    student_ids: List[str],
+    reason_text: str = "",
+) -> Dict[str, Any]:
+    """Polite rejection draft per student. Does NOT send."""
+    try:
+        if not drive_id:
+            return {"error": "drive_id required"}
+        if not student_ids:
+            return {"error": "student_ids must be a non-empty list"}
+
+        drive = demo_drive_by_id(drive_id) or select_one(T_DRIVES, {"id": drive_id})
+        if not drive:
+            return {"error": "drive not found"}
+
+        company = None
+        if drive.get("company_id"):
+            company = demo_company_by_id(drive.get("company_id")) or select_one(
+                T_COMPANIES, {"id": drive.get("company_id")}
+            )
+        company_name = (company or {}).get("name") or "the recruiting team"
+        role = drive.get("role") or "the role"
+
+        drafts: List[Dict[str, Any]] = []
+        for sid in student_ids:
+            student = demo_student_by_id(sid) or select_one(T_STUDENTS, {"id": sid})
+            if not student:
+                drafts.append({
+                    "student_id": sid,
+                    "name": None,
+                    "subject": None,
+                    "body": None,
+                    "error": "student not found",
+                })
+                continue
+
+            name = student.get("name") or "Candidate"
+            subject = f"Update on your application — {role} @ {company_name}"
+            body = _draft_email_with_llm(
+                kind="rejection",
+                tone="professional",
+                student_name=name,
+                role=role,
+                company_name=company_name,
+                slot_text=None,
+                reason=reason_text,
+            )
+
+            drafts.append({
+                "student_id": sid,
+                "name": name,
+                "subject": subject,
+                "body": body,
+                "type": "rejection",
+            })
+
+        return {
+            "action": "rejection_email",
+            "drive": {
+                "id": drive["id"],
+                "role": role,
+                "company": company_name,
+            },
+            "reason_text": reason_text,
+            "drafts": drafts,
+            "total": len(drafts),
+            "requires_confirmation": True,
+        }
+    except Exception as e:
+        return {"error": f"propose_rejection_email failed: {e}"}
+
+
+# ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+def demo_company_by_id(cid: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not cid:
+        return None
+    for c in DEMO_COMPANIES:
+        if c.get("id") == cid:
+            return c
+    return None
+
+
+def _fallback_interview_body(student_name: str, role: str, company_name: str, slot_text: str) -> str:
+    slot_line = f"Proposed slot: {slot_text}." if slot_text else "We will share the slot details shortly."
+    return (
+        f"Hi {student_name},\n\n"
+        f"Congratulations! Your profile has been shortlisted for the {role} role at {company_name}. "
+        f"We would like to invite you to the next round of interviews.\n\n"
+        f"{slot_line} Please join using the link below:\n"
+        f"Meeting link: {{{{meeting_link}}}}\n\n"
+        f"Kindly confirm your availability by replying to this email. If the proposed time "
+        f"does not work, share 2–3 alternative slots and we will coordinate.\n\n"
+        f"Best regards,\n"
+        f"Placement Cell"
+    )
+
+
+def _fallback_rejection_body(student_name: str, role: str, company_name: str, reason: str) -> str:
+    reason_line = f"Specifically: {reason}\n\n" if reason else ""
+    return (
+        f"Hi {student_name},\n\n"
+        f"Thank you for your interest in the {role} role at {company_name} and for taking the "
+        f"time to go through the selection process with us.\n\n"
+        f"After careful review, we will not be moving forward with your application for this "
+        f"particular role. {reason_line}This decision is specific to the requirements of this "
+        f"drive and is not a reflection of your overall capability — we strongly encourage you "
+        f"to apply to upcoming drives that align with your strengths.\n\n"
+        f"Wishing you the very best for your placement season.\n\n"
+        f"Warm regards,\n"
+        f"Placement Cell"
+    )
+
+
+def _draft_email_with_llm(
+    kind: str,
+    tone: str,
+    student_name: str,
+    role: str,
+    company_name: str,
+    slot_text: Optional[str],
+    reason: Optional[str],
+) -> str:
+    """
+    Draft an email body via Groq; on any failure, use the deterministic template.
+
+    Always returns a body containing the literal `{{meeting_link}}` placeholder
+    for interview drafts, so the PC can substitute it on confirmation.
+    """
+    # Deterministic fallbacks (used when Groq unavailable or on any error).
+    if kind == "interview":
+        fallback = _fallback_interview_body(student_name, role, company_name, slot_text or "")
+    else:
+        fallback = _fallback_rejection_body(student_name, role, company_name, reason or "")
+
+    try:
+        from services.llm_client import groq_available, _get_groq_client, _groq_model  # type: ignore
+        if not groq_available():
+            return fallback
+
+        if kind == "interview":
+            system = (
+                "You draft short, warm, professional interview invitation emails for Indian "
+                "college placement cells. Keep it under 140 words. Use the placeholder "
+                "{{meeting_link}} literally where a meeting URL should go. Tone: "
+                f"{tone}. Do NOT include a subject line — just the body. Sign off as 'Placement Cell'."
+            )
+            slot_line = f"Proposed interview slot: {slot_text}." if slot_text else "Slot details will be shared shortly."
+            user = (
+                f"Write an interview invite for {student_name} for the {role} role at "
+                f"{company_name}. {slot_line} The body must include the literal "
+                f"placeholder {{{{meeting_link}}}}. Ask the candidate to confirm availability "
+                f"or suggest 2-3 alternative slots. No subject line — body only."
+            )
+        else:
+            system = (
+                "You draft polite, empathetic rejection emails for Indian college placement "
+                "cells. Keep it under 120 words. Do NOT include a subject line — just the body. "
+                "Tone: professional, respectful, encouraging toward future drives. Sign off as "
+                "'Placement Cell'. Never use harsh language."
+            )
+            reason_line = f"Optional reason to reference tactfully: {reason}." if reason else "No specific reason given."
+            user = (
+                f"Write a polite rejection to {student_name} for the {role} role at "
+                f"{company_name}. {reason_line} Emphasise this is role-specific and encourage "
+                f"them to apply to upcoming drives. No subject line — body only."
+            )
+
+        client = _get_groq_client()
+        response = client.chat.completions.create(
+            model=_groq_model(),
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.4,
+            max_tokens=420,
+        )
+        body = (response.choices[0].message.content or "").strip()
+        if not body:
+            return fallback
+        # Safety: ensure interview drafts carry the placeholder.
+        if kind == "interview" and "{{meeting_link}}" not in body:
+            body = body.rstrip() + "\n\nMeeting link: {{meeting_link}}"
+        return body
+    except Exception:
+        return fallback
+
 
 def _compact_student(s: Dict[str, Any]) -> Dict[str, Any]:
     enriched = s.get("profile_enriched") or {}
@@ -589,4 +956,18 @@ TOOL_REGISTRY = {
     "list_drives": list_drives,
     "compare_students": compare_students,
     "match_drives_for_student": match_drives_for_student,
+    # Write-proposal tools — return previews only; UI gates actual execution.
+    "propose_shortlist": propose_shortlist,
+    "propose_interview_email": propose_interview_email,
+    "propose_rejection_email": propose_rejection_email,
+}
+
+
+# Set of tool names that the frontend should render as ActionCards (confirmation
+# UX) rather than generic tool-result badges. Surfaced here so orchestrator / UI
+# stay in sync with one source of truth.
+WRITE_PROPOSAL_TOOLS = {
+    "propose_shortlist",
+    "propose_interview_email",
+    "propose_rejection_email",
 }

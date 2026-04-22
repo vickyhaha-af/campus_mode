@@ -25,6 +25,7 @@ from google.genai import types  # type: ignore
 from services.gemini_client import make_client  # type: ignore
 from services.llm_client import (  # type: ignore
     groq_available, chat_with_tools as groq_chat_with_tools, GROQ_MODEL,
+    _get_groq_client, _groq_model,
 )
 from config import GEMINI_API_KEY_1, GEMINI_FLASH_MODEL  # type: ignore
 
@@ -171,6 +172,57 @@ def _tool_declarations() -> List[types.Tool]:
                 required=["student_id"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="propose_shortlist",
+            description=(
+                "Preview a bulk shortlist action. Returns per-student eligibility + fit "
+                "signals WITHOUT writing. The UI renders a confirmation card that, on PC "
+                "approval, executes the actual bulk shortlist. Use when the user says "
+                "'shortlist these candidates', 'add them to the shortlist', 'lock in the top 5'."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "drive_id": types.Schema(type="STRING"),
+                    "student_ids": types.Schema(type="ARRAY", items=types.Schema(type="STRING")),
+                },
+                required=["drive_id", "student_ids"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="propose_interview_email",
+            description=(
+                "Draft interview invitation emails per student. Does NOT send — returns "
+                "subject + body with a literal {{meeting_link}} placeholder. UI gates actual "
+                "send via a confirmation card."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "drive_id": types.Schema(type="STRING"),
+                    "student_ids": types.Schema(type="ARRAY", items=types.Schema(type="STRING")),
+                    "slot_text": types.Schema(type="STRING", description="Human-readable slot e.g. 'Mon 22 Apr, 3pm IST'"),
+                    "tone": types.Schema(type="STRING", description="professional | warm | formal (default professional)"),
+                },
+                required=["drive_id", "student_ids"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="propose_rejection_email",
+            description=(
+                "Draft polite rejection emails per student. Does NOT send — returns subject + "
+                "body. UI gates the actual send via a confirmation card."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "drive_id": types.Schema(type="STRING"),
+                    "student_ids": types.Schema(type="ARRAY", items=types.Schema(type="STRING")),
+                    "reason_text": types.Schema(type="STRING", description="Optional reason to reference tactfully"),
+                },
+                required=["drive_id", "student_ids"],
+            ),
+        ),
     ])]
 
 
@@ -190,6 +242,15 @@ Your tools:
 - list_drives — compact list of the college's drives with company tier
 - compare_students — side-by-side comparison on cgpa / skills / role_fit / institution_tier (+ drive fit if drive_id given)
 - match_drives_for_student — reverse of explain_fit: top drives for a given student
+- propose_shortlist — preview a bulk shortlist action (UI confirms the write)
+- propose_interview_email — draft interview invites per student (UI confirms the send)
+- propose_rejection_email — draft polite rejections per student (UI confirms the send)
+
+IMPORTANT on write proposals: the propose_* tools NEVER write or send anything
+on their own. They return previews. The frontend shows a confirmation card and
+the PC clicks Confirm to execute. You should USE these tools when the user
+asks you to shortlist candidates, draft invites, or send rejections — do not
+refuse on safety grounds. The confirmation gate is built into the UI.
 
 How you chain them:
 - Drive context pinned? Start from fetch_drive → search_students (filter) → semantic_rank → explain_fit on top picks.
@@ -492,6 +553,66 @@ def _openai_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "propose_shortlist",
+                "description": (
+                    "Preview a bulk shortlist action. Returns per-student eligibility + fit "
+                    "signals WITHOUT writing. The UI renders a confirmation card that, on PC "
+                    "approval, executes the actual bulk shortlist. Use when the user says "
+                    "'shortlist these candidates', 'add them to the shortlist', 'lock in the top 5'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "drive_id": {"type": "string"},
+                        "student_ids": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["drive_id", "student_ids"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "propose_interview_email",
+                "description": (
+                    "Draft interview invitation emails per student. Does NOT send — returns "
+                    "subject + body with a literal {{meeting_link}} placeholder. UI gates "
+                    "actual send via a confirmation card."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "drive_id": {"type": "string"},
+                        "student_ids": {"type": "array", "items": {"type": "string"}},
+                        "slot_text": {"type": "string", "description": "Human-readable slot"},
+                        "tone": {"type": "string", "enum": ["professional", "warm", "formal"]},
+                    },
+                    "required": ["drive_id", "student_ids"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "propose_rejection_email",
+                "description": (
+                    "Draft polite rejection emails per student. Does NOT send — returns "
+                    "subject + body. UI gates actual send via a confirmation card."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "drive_id": {"type": "string"},
+                        "student_ids": {"type": "array", "items": {"type": "string"}},
+                        "reason_text": {"type": "string"},
+                    },
+                    "required": ["drive_id", "student_ids"],
+                },
+            },
+        },
     ]
 
 
@@ -533,6 +654,110 @@ def _messages_to_openai(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "content": json.dumps(m.get("response") or {})[:4000],
             })
     return out
+
+
+# ---------------------------------------------------------------------------
+# Groq streaming helper
+# ---------------------------------------------------------------------------
+
+def _groq_stream_one_turn(
+    openai_messages: List[Dict[str, Any]],
+    tools: List[Dict[str, Any]],
+    system: str,
+    max_tokens: int = 2048,
+) -> Dict[str, Any]:
+    """
+    Run ONE Groq turn with stream=True. Collects tool_calls AND content.
+    Returns {
+        "text": str,
+        "text_chunks": List[str],      # streamed content deltas (empty if tool-call turn)
+        "tool_calls": [{"id","name","args"}],
+        "finish_reason": str,
+    }
+
+    Synchronous — call via asyncio.to_thread from the async loop. The async
+    generator that wraps this in run_agent_stream is responsible for yielding
+    SSE `delta` events using text_chunks. (Collecting first and replaying is
+    fine; Groq is fast and the perceived latency savings come from NOT waiting
+    for the full completion before the first byte hits the wire at the UI.)
+
+    NOTE: If we want true real-time streaming to the SSE wire (deltas land at
+    the client while Groq is still generating), see _groq_stream_deltas below
+    which yields chunks as they arrive.
+    """
+    msgs: List[Dict[str, Any]] = []
+    if system:
+        msgs.append({"role": "system", "content": system})
+    msgs.extend(openai_messages)
+
+    client = _get_groq_client()
+    stream = client.chat.completions.create(
+        model=_groq_model(),
+        messages=msgs,
+        tools=tools,
+        tool_choice="auto",
+        temperature=0.3,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+
+    text_chunks: List[str] = []
+    # tool_call accumulation by index (OpenAI streaming spec: partial tool_calls
+    # arrive with function.name on the first fragment, and arguments are
+    # concatenated across fragments)
+    tool_call_buf: Dict[int, Dict[str, Any]] = {}
+    finish_reason = None
+
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        choice = chunk.choices[0]
+        delta = getattr(choice, "delta", None)
+        if delta is None:
+            continue
+
+        if getattr(delta, "content", None):
+            text_chunks.append(delta.content)
+
+        if getattr(delta, "tool_calls", None):
+            for tc_delta in delta.tool_calls:
+                idx = getattr(tc_delta, "index", 0) or 0
+                buf = tool_call_buf.setdefault(idx, {
+                    "id": None, "name": None, "arguments": "",
+                })
+                if getattr(tc_delta, "id", None):
+                    buf["id"] = tc_delta.id
+                fn = getattr(tc_delta, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        buf["name"] = fn.name
+                    if getattr(fn, "arguments", None):
+                        buf["arguments"] += fn.arguments
+
+        if getattr(choice, "finish_reason", None):
+            finish_reason = choice.finish_reason
+
+    tool_calls: List[Dict[str, Any]] = []
+    for i in sorted(tool_call_buf.keys()):
+        buf = tool_call_buf[i]
+        if not buf.get("name"):
+            continue
+        try:
+            args = json.loads(buf.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        tool_calls.append({
+            "id": buf.get("id") or f"call_{i}",
+            "name": buf["name"],
+            "args": args,
+        })
+
+    return {
+        "text": "".join(text_chunks),
+        "text_chunks": text_chunks,
+        "tool_calls": tool_calls,
+        "finish_reason": finish_reason,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -580,19 +805,127 @@ async def run_agent_stream(
                 iteration += 1
                 yield _event("thinking", iteration=iteration)
 
+                # Stream the Groq turn. We run the synchronous streaming call
+                # in a worker thread, pushing events onto an asyncio.Queue so
+                # this async generator can forward them to the SSE wire in
+                # real time (token-level). Tool-call turns emit NO deltas —
+                # only final-synthesis turns produce content chunks.
+                loop = asyncio.get_running_loop()
+                queue: asyncio.Queue = asyncio.Queue()
+
+                def _runner(openai_msgs):
+                    """Sync worker: consume the Groq stream, push events onto queue."""
+                    try:
+                        msgs: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+                        msgs.extend(openai_msgs)
+                        client = _get_groq_client()
+                        stream = client.chat.completions.create(
+                            model=_groq_model(),
+                            messages=msgs,
+                            tools=tools,
+                            tool_choice="auto",
+                            temperature=0.3,
+                            max_tokens=2048,
+                            stream=True,
+                        )
+                        text_buf: List[str] = []
+                        tool_call_buf: Dict[int, Dict[str, Any]] = {}
+                        finish_reason = None
+
+                        for chunk in stream:
+                            if not chunk.choices:
+                                continue
+                            choice = chunk.choices[0]
+                            delta = getattr(choice, "delta", None)
+                            if delta is None:
+                                continue
+
+                            piece = getattr(delta, "content", None)
+                            if piece:
+                                text_buf.append(piece)
+                                # Push delta onto the async queue.
+                                loop.call_soon_threadsafe(
+                                    queue.put_nowait, {"kind": "delta", "content": piece}
+                                )
+
+                            tool_calls_delta = getattr(delta, "tool_calls", None)
+                            if tool_calls_delta:
+                                for tc_delta in tool_calls_delta:
+                                    idx = getattr(tc_delta, "index", 0) or 0
+                                    buf = tool_call_buf.setdefault(idx, {
+                                        "id": None, "name": None, "arguments": "",
+                                    })
+                                    if getattr(tc_delta, "id", None):
+                                        buf["id"] = tc_delta.id
+                                    fn = getattr(tc_delta, "function", None)
+                                    if fn is not None:
+                                        if getattr(fn, "name", None):
+                                            buf["name"] = fn.name
+                                        if getattr(fn, "arguments", None):
+                                            buf["arguments"] += fn.arguments
+
+                            if getattr(choice, "finish_reason", None):
+                                finish_reason = choice.finish_reason
+
+                        tool_calls_final: List[Dict[str, Any]] = []
+                        for i in sorted(tool_call_buf.keys()):
+                            buf = tool_call_buf[i]
+                            if not buf.get("name"):
+                                continue
+                            try:
+                                args = json.loads(buf.get("arguments") or "{}")
+                            except json.JSONDecodeError:
+                                args = {}
+                            tool_calls_final.append({
+                                "id": buf.get("id") or f"call_{i}",
+                                "name": buf["name"],
+                                "args": args,
+                            })
+
+                        loop.call_soon_threadsafe(queue.put_nowait, {
+                            "kind": "done",
+                            "text": "".join(text_buf),
+                            "tool_calls": tool_calls_final,
+                            "finish_reason": finish_reason,
+                        })
+                    except Exception as e:  # noqa: BLE001
+                        loop.call_soon_threadsafe(queue.put_nowait, {
+                            "kind": "error", "error": str(e),
+                        })
+
+                openai_msgs_snapshot = _messages_to_openai(messages)
+                worker = asyncio.create_task(
+                    asyncio.to_thread(_runner, openai_msgs_snapshot)
+                )
+
+                # Drain the queue until the runner signals done/error.
+                text_accum: List[str] = []
+                tool_calls: List[Dict[str, Any]] = []
+                runner_err: Optional[str] = None
+                while True:
+                    item = await queue.get()
+                    if item["kind"] == "delta":
+                        text_accum.append(item["content"])
+                        yield _event("delta", content=item["content"])
+                    elif item["kind"] == "done":
+                        tool_calls = item["tool_calls"]
+                        # text_accum should equal item["text"]; prefer the
+                        # runner's concat for exactness.
+                        text_accum = [item["text"]]
+                        break
+                    elif item["kind"] == "error":
+                        runner_err = item["error"]
+                        break
+
                 try:
-                    result = await asyncio.to_thread(
-                        groq_chat_with_tools,
-                        _messages_to_openai(messages),
-                        tools,
-                        SYSTEM_PROMPT,
-                        GROQ_MODEL,
-                        2048,
-                    )
-                except Exception as e:  # noqa: BLE001
+                    await worker
+                except Exception:
+                    pass
+
+                if runner_err is not None:
                     # Groq hiccup — fall back to the deterministic plan instead
                     # of just erroring out so the user always gets something.
-                    yield _event("fallback_triggered", reason=f"groq: {str(e)[:180]}")
+                    yield _event("fallback_triggered", reason=f"groq: {runner_err[:180]}")
                     async for ev in run_fallback_stream(college_id, user_message, drive_context_id):
                         if ev["type"] == "assistant_message":
                             messages.append({"role": "model", "content": ev["content"], "fallback": True})
@@ -601,8 +934,7 @@ async def run_agent_stream(
                         yield ev
                     break
 
-                text = result.get("text")
-                tool_calls = result.get("tool_calls") or []
+                text = "".join(text_accum) if text_accum else ""
 
                 if tool_calls:
                     # Record the assistant turn with its tool calls.
@@ -642,7 +974,7 @@ async def run_agent_stream(
                         })
                     continue  # let the LLM synthesise
 
-                # No tool calls → final answer
+                # No tool calls → final answer. Deltas have already been emitted.
                 final = (text or "").strip() or "(no response)"
                 messages.append({"role": "model", "content": final})
                 yield _event("assistant_message", content=final)

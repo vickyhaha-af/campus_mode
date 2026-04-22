@@ -6,7 +6,8 @@ import {
   Check, X, ArrowLeft, FileText, ShieldCheck, Building2,
   Share2, Download, Copy, Mail,
 } from 'lucide-react'
-import { getDrive, createRecruiterToken } from '../api'
+import { ChevronDown, ChevronUp, Scale } from 'lucide-react'
+import { getDrive, createRecruiterToken, getBiasAudit } from '../api'
 import CampusNav from '../components/CampusNav'
 import DriveShortlist from '../components/DriveShortlist'
 
@@ -256,10 +257,215 @@ export default function DriveDetailPage() {
           <RuleRow label="Location flexibility required" val={rules.location_flexibility_required ? 'yes' : 'no'}     hasValue={!!rules.location_flexibility_required} />
         </Section>
 
+        <BiasAuditPanel driveId={drive.id} />
+
         <Section title="Shortlist">
           <DriveShortlist drive={drive} />
         </Section>
       </div>
+    </div>
+  )
+}
+
+/* ============================================================================
+ * Bias audit panel
+ * - Polls the backend on mount; refreshes every 20s so adding shortlist rows
+ *   updates the panel without a page reload.
+ * - Collapsed by default; expand to see side-by-side percentages.
+ * ==========================================================================*/
+
+const SKEW_CFG = {
+  none:    { dot: 'var(--moss)',        label: 'No skew detected',       tone: 'var(--sage-pale)',  ring: 'rgba(74,124,111,0.22)' },
+  monitor: { dot: 'var(--accent-warm)', label: 'Monitor — mild drift',   tone: 'var(--accent-warm-light)', ring: 'rgba(199,138,62,0.25)' },
+  flag:    { dot: 'var(--blush)',       label: 'Skew detected',          tone: 'var(--blush-pale)', ring: 'rgba(196,117,106,0.3)' },
+}
+
+function BiasAuditPanel({ driveId }) {
+  const [audit, setAudit] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchOnce = async () => {
+      try {
+        const { data } = await getBiasAudit(driveId)
+        if (!cancelled) setAudit(data)
+      } catch (_e) {
+        if (!cancelled) setAudit(null)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    fetchOnce()
+    const id = setInterval(fetchOnce, 20000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [driveId])
+
+  if (loading) return null
+  if (!audit) return null
+  if (!audit.eligible) {
+    // Skip rendering if the shortlist is too small — matches the PRD spec.
+    return null
+  }
+
+  const cfg = SKEW_CFG[audit.skew_level] || SKEW_CFG.none
+  const dims = audit.dimensions || {}
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-60px' }}
+      transition={{ duration: 0.4 }}
+      style={{
+        background: cfg.tone,
+        border: `1px solid ${cfg.ring}`,
+        borderRadius: 14,
+        padding: 18,
+        marginBottom: 16,
+      }}
+    >
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 12, flexWrap: 'wrap',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 10,
+            background: 'var(--white)',
+            border: `1px solid ${cfg.ring}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <Scale size={15} color={cfg.dot} strokeWidth={2.2} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+              fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700,
+              color: 'var(--ink)', letterSpacing: '-0.01em', marginBottom: 2,
+            }}>
+              <span style={{
+                width: 9, height: 9, borderRadius: '50%', background: cfg.dot,
+                boxShadow: `0 0 0 3px ${cfg.dot}33`,
+              }} />
+              Live bias audit — {cfg.label}
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--slate)' }}>
+              Shortlist ({audit.shortlist_size}) vs eligible pool ({audit.pool_size}).
+              Flags any single category skewing &gt;15 pp.
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="btn-ghost btn-sm"
+          style={{ fontSize: 12 }}
+        >
+          {expanded ? <>Hide <ChevronUp size={13} /></> : <>Show details <ChevronDown size={13} /></>}
+        </button>
+      </div>
+
+      {audit.recommendations && audit.recommendations.length > 0 && (
+        <div style={{
+          marginTop: 12, fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55,
+          background: 'var(--white)',
+          border: `1px solid ${cfg.ring}`,
+          borderRadius: 10, padding: 12,
+        }}>
+          {audit.recommendations.map((r, i) => (
+            <div key={i} style={{ marginBottom: i === audit.recommendations.length - 1 ? 0 : 6 }}>
+              • {r}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="details"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25 }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div style={{ marginTop: 14, display: 'grid', gap: 12 }}>
+              {Object.entries(dims).map(([dim, payload]) => (
+                <BiasDimensionBlock key={dim} name={dim} payload={payload} />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
+function BiasDimensionBlock({ name, payload }) {
+  const rows = payload?.rows || []
+  return (
+    <div style={{
+      background: 'var(--white)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      padding: 12,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        fontSize: 12, fontWeight: 600, color: 'var(--slate-mid)',
+        textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8,
+      }}>
+        {name.replace(/_/g, ' ')}
+        {payload.skewed && (
+          <span style={{
+            padding: '2px 8px', borderRadius: 'var(--radius-pill)',
+            background: 'var(--blush-pale)', color: 'var(--blush)',
+            fontSize: 10.5, letterSpacing: 0.4,
+          }}>skewed</span>
+        )}
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+        <thead>
+          <tr style={{ color: 'var(--slate-mid)' }}>
+            <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 500 }}>Category</th>
+            <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Shortlist</th>
+            <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Pool</th>
+            <th style={{ textAlign: 'right', padding: '4px 6px', fontWeight: 500 }}>Δ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const flag = Math.abs(r.delta) > 15
+            return (
+              <tr key={r.key}>
+                <td style={{
+                  padding: '4px 6px', borderTop: '1px solid var(--border)',
+                  color: 'var(--ink)',
+                }}>{r.key}</td>
+                <td style={{
+                  padding: '4px 6px', borderTop: '1px solid var(--border)',
+                  textAlign: 'right', fontFamily: 'var(--font-mono)',
+                  color: 'var(--slate)',
+                }}>{r.shortlist_pct}%</td>
+                <td style={{
+                  padding: '4px 6px', borderTop: '1px solid var(--border)',
+                  textAlign: 'right', fontFamily: 'var(--font-mono)',
+                  color: 'var(--slate)',
+                }}>{r.pool_pct}%</td>
+                <td style={{
+                  padding: '4px 6px', borderTop: '1px solid var(--border)',
+                  textAlign: 'right', fontFamily: 'var(--font-mono)',
+                  color: flag ? 'var(--blush)' : 'var(--slate-mid)',
+                  fontWeight: flag ? 700 : 500,
+                }}>{r.delta > 0 ? '+' : ''}{r.delta}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }

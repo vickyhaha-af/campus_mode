@@ -5,6 +5,8 @@ import {
   listShortlists, listStudents, bulkShortlist, changeShortlistStage, removeShortlist,
 } from '../api'
 import { useToast } from './Toast'
+import EmailDraftModal from './EmailDraftModal'
+import { Mail } from 'lucide-react'
 
 
 const STAGE_ORDER = [
@@ -24,6 +26,7 @@ export default function DriveShortlist({ drive }) {
   const [err, setErr] = useState('')
   const [adding, setAdding] = useState(false)
   const [busyId, setBusyId] = useState(null)
+  const [emailingSl, setEmailingSl] = useState(null)  // shortlist row to email
   const toast = useToast()
   const collegeId = drive?.college_id
 
@@ -174,6 +177,9 @@ export default function DriveShortlist({ drive }) {
                           ×
                         </button>
                         <div style={{ flex: 1 }} />
+                        <button onClick={() => setEmailingSl(sl)} title="Email student" style={smallBtn('var(--accent-experience)')}>
+                          <Mail size={10} />
+                        </button>
                         <button onClick={() => remove(sl.id)} title="Remove"
                           style={smallBtn('var(--slate-light)')}>
                           <Trash2 size={10} />
@@ -225,6 +231,18 @@ export default function DriveShortlist({ drive }) {
             style={{ ...secondary, marginTop: 10 }}>Close</button>
         </motion.div>
       )}
+      <AnimatePresence>
+        {emailingSl && (
+          <EmailDraftModal
+            driveId={emailingSl.drive_id}
+            studentId={emailingSl.student_id}
+            studentName={emailingSl._student?.name}
+            onClose={() => setEmailingSl(null)}
+            onSent={refresh}
+          />
+        )}
+      </AnimatePresence>
+
       {adding && students.length === 0 && (
         <div style={{ marginTop: 20, padding: 12, background: 'var(--cream-mid)', borderRadius: 8, fontSize: 13, color: 'var(--slate-mid)' }}>
           No eligible students remaining (all either shortlisted or don&apos;t meet rules).

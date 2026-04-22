@@ -189,3 +189,12 @@ export const listAuditActions = (college_id) =>
 
 // ---------- coach (Agent R) ----------
 export const getCoach = (student_id) => campus.get(`/coach/${student_id}`)
+
+// ---------- communications (email workflow) ----------
+export const draftEmail = (payload) => campus.post('/communications/draft', payload)
+export const listCommunications = (drive_id, student_id) => {
+  const q = new URLSearchParams()
+  if (drive_id) q.append('drive_id', drive_id)
+  if (student_id) q.append('student_id', student_id)
+  return campus.get(`/communications?${q.toString()}`)
+}

@@ -158,28 +158,45 @@ Required env vars in Vercel:
 
 ---
 
-## 8. Feature Completeness Matrix
+## 8. SQL migrations to apply (in order)
+
+1. `supabase_schema.sql` — parent Tech Vista tables (auth-tied)
+2. `campus/schema.sql` — campus vertical tables + indexes + triggers
+3. `campus/schema_rls_patch.sql` — initial permissive RLS (already active)
+4. `campus/schema_rls_tighten.sql` — **apply when turning on real auth**: reads stay public, writes require authenticated
+5. `campus/schema_multi_tenant.sql` — **apply for production multi-tenant**: per-college scoping via `campus_college_members` + `user_colleges()` SQL function. PC admins only see their own college's data.
+
+Demo mode keeps working regardless — in-memory college bypasses all RLS.
+
+## 9. Feature Completeness Matrix
 
 ### Done ✅
-- Rich LLM enricher (passions, interests, personality, role-fit, achievement weight)
-- Bulk resume ingest with rate-limiter + async job tracking
-- Student / Drive / Company CRUD
-- Demo mode (20 hand-crafted students, 4 drives, 5 companies — no setup needed)
-- Full chatbot with 6 tool calls (search_students, semantic_rank, fetch_drive, check_eligibility, get_student_profile, explain_fit)
-- Fallback chat (works even without Gemini)
-- Shortlist management + 7-stage Kanban lifecycle
-- Eligibility-rules-driven shortlist filtering
-- Demographic filter compliance warnings
-- Unified navigation across all campus pages
-- Setup onboarding banner
+- Rich LLM enricher via **Groq (Llama 3.3 70B)** — passions, interests, personality, role-fit, achievement weight, institution tier, Indian credentials (JEE/CAT/KVPY/Olympiads), company tier on internships
+- **Progressive ingest** — regex Phase A (visible in ~10s for 150 resumes) + LLM Phase B in background (~30-40 min)
+- Student / Drive / Company CRUD with dedupe + compliance guards
+- **Demo mode** (20 hand-crafted students, 4 drives, 5 companies — no setup needed)
+- **Full chatbot with 9 tool calls**: search_students, semantic_rank, fetch_drive, check_eligibility, get_student_profile, explain_fit, list_drives, compare_students, match_drives_for_student
+- Token-streaming chat responses + inline confirmation ActionCards for write actions (propose_shortlist, propose_interview_email, propose_rejection_email)
+- Chat history sidebar
+- **Deterministic fallback chat** works even without any LLM
+- **pgvector + BOW cosine semantic ranking** (real DB + demo)
+- Shortlist management + 7-stage Kanban lifecycle + CSV export
+- **Eligibility-rules-driven shortlist filtering** with bias audit live panel (traffic-light skew detection on branch/gender/tier)
+- **Career Coach** (student-facing LLM utility): readiness score, top drive matches with why/gap, resume quality audit, skills to acquire, 4-week action plan, peer ranking
+- **Email workflow**: LLM-drafted interview/offer/rejection emails with tone + slot + custom instructions; PC reviews + edits + adds meeting link + sends (mocked to `campus_communications` table)
+- **Analytics dashboards**: placement funnel chart, branch placement rate, drive conversion heatmap, "needs attention" actionable feed
+- **Audit log** — SHA-256 hash-chained immutable log on every shortlist/drive/email/chat action + filterable viewer page + chain integrity verify + CSV export
+- **Recruiter view** via signed-token links (30-day expiry)
+- Unified navigation, dark mode toggle, mobile-responsive Kanban/filters/tables, toast notifications on every mutating action
+- Setup onboarding banner with contextual messaging (env missing vs schema missing)
+- Auth gates on PC-admin routes (`RequireAuth`); demo mode bypasses; parent's `/api/auth/login` reused
+- Institution tier knowledge base (~180 Indian colleges, tier_1 / tier_2 / tier_3)
+- Dual-provider LLM routing: **Groq primary, Gemini fallback** — `AIza*` vs `AQ.*` vs `gsk_*` key autodetection
 
 ### In progress 🟡 (needs code)
-- Email drafting + sending (email_composer service exists in parent; campus wrapper TODO)
-- Meeting link auto-generation (Google Meet / Zoom OAuth — deferred to v2)
-- Student self-edit page (currently a stub)
-- Recruiter signed-token view (schema + route exist; UI is a stub)
-- Live bias-audit warnings on shortlists (backend module exists in parent)
-- Audit log viewer UI
+- **Google Calendar / Google Meet auto-link generation** — requires OAuth screens + consent (currently: PC pastes meeting link manually into email drafts; `{{meeting_link}}` placeholder substitution already works)
+- **Real SMTP sending** — wired to mock (writes to `campus_communications` with `status='sent'`). Flip `EMAIL_PROVIDER` env from `mock` to `sendgrid` + add `SENDGRID_API_KEY` to enable real delivery (parent's `email_service.py` already supports this)
+- **Paid Groq tier** — for actually hitting 30-seconds-for-150-resumes (free tier caps ingest at ~4 resumes/minute on Llama 3.3 70B)
 
 ### Deferred to v2 🟡
 - Multi-tenancy (multiple colleges on same instance)

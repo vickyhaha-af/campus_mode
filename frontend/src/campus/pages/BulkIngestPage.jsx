@@ -7,12 +7,14 @@ import {
 } from 'lucide-react'
 import { startIngest, pollIngest } from '../api'
 import CampusNav from '../components/CampusNav'
+import { useToast } from '../components/Toast'
 
 const POLL_MS = 2500
 
 export default function BulkIngestPage() {
   const collegeId = typeof window !== 'undefined' ? localStorage.getItem('campus_college_id') : null
   const isDemo = typeof window !== 'undefined' && localStorage.getItem('campus_demo_mode') === '1'
+  const toast = useToast()
   const [files, setFiles] = useState([])
   const [job, setJob] = useState(null)
   const [err, setErr] = useState('')
@@ -33,6 +35,7 @@ export default function BulkIngestPage() {
     if (!files.length) { setErr('Pick resume files first'); return }
     try {
       const { data } = await startIngest(collegeId, files)
+      toast.success(`Ingest started — ${data.total} resume${data.total === 1 ? '' : 's'} queued`)
       setJob({
         id: data.job_id, total: data.total,
         processed: 0, succeeded: 0, failed: 0,
@@ -43,11 +46,16 @@ export default function BulkIngestPage() {
         try {
           const { data: j } = await pollIngest(data.job_id)
           setJob(j)
-          if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') clearInterval(pollRef.current)
+          if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
+            clearInterval(pollRef.current)
+            if (j.status === 'completed') toast.success(`Ingest complete — ${j.succeeded || j.llm_enriched || 0} students ready`)
+            else if (j.status === 'failed') toast.error('Ingest failed — see error log')
+          }
         } catch (e) { /* keep polling */ }
       }, POLL_MS)
     } catch (e) {
-      setErr(e.response?.data?.detail || e.message || 'Ingest failed to start')
+      const msg = e.response?.data?.detail || e.message || 'Ingest failed to start'
+      setErr(msg); toast.error(msg)
     }
   }
 

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import CampusNav from '../components/CampusNav'
 import { listStudents, listDrives, listShortlistsByStudent } from '../api'
+import CoachPanel from '../components/coach/CoachPanel'
 
 
 const STAGE_GROUPS = [
@@ -134,6 +135,9 @@ export default function StudentDashboard() {
             }} />
 
             <ProfileCard student={student} />
+
+            {/* Career Coach — LLM gap analysis + actionable steps (the utility feature) */}
+            <CoachPanel studentId={student.id} />
 
             <DrivesSection drives={eligibleDrives} totalCount={drives.length} />
 
